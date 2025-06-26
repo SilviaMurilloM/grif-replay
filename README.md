@@ -11,6 +11,20 @@ Grif-Replay is composed of two parts; the data-sorting engine and server (writte
 
 Download the repository from GitHub into your chosen working directory. Then in the working directory just run `make`.
 
+### Create the Midas shared-object file
+
+(Most users can skip this part and proceed to Running Grif-Replay. This only needs to be done on a TRIUMF DAQ computer.) If this instance of grif-replay is intended to connect to an online Midas experiment then the Midas shared-object file must also be created. This requires two additional files which are deliberately not included in this grif-replay Github repository. The two required files are named libmidas.a and midas.h. They must match the version of Midas installed on the machine that you intend to connect to (which may be a different version than the version of midas that is installed on the local machine where grif-replay is installed.). Copy these two files (libmidas.a and midas.h) to the grif-replay directory.
+
+There is a dependancy in the midas.h file for a file named git-revision.h. This is not required by grif-replay so there are two options; either comment out this line in the midas.h file (#include "git-revision.h"), or alternatively create a blank version of this file in the grif-replay directory ('touch git-revision.h').
+
+On some machines it might be necessary to instal the package libnsl-dev.
+
+Then compile the Midas shared-object file with the following command:
+
+`make midas`
+
+See the Connect to Online instructions for how to attach grif-replay to the Midas experiment.
+
 ## Running Grif-Replay
 
 ### Launch the server
@@ -63,6 +77,18 @@ run the command
 `.x tar2root.C("/tig/grifstore1/grifalt/schedule146/S2232/runXXXX.tar","runXXXX.root)`
 
 The runXXXX.root histogram file can now be opened and viewed in Root or GRSISort.
+
+### Running without an internet connection
+
+An internet connection is required to run the web interface and spectrumViewer codes from the GitHub servers. You can alternatively run completely offline if you launch a second server for the web codes (the first server being the grif-replay one). First download (clone) the spectrumViewer repository from GitHub into a suitable working directory. Navigate to the spectrumViewer working directory and launch a web server with a port number which is different from 9093 because that one is already in use by grif-replay. Port 9000 is used as the example here. Open a web browser and navigate to the following URL:
+
+`localhost:9000/analyzerInterface.html?backend=localhost&port=9093`
+
+In this example the `localhost:9000` is the spectrumViewer server available on port number 9000. The `backend=localhost&port=9093` is the grif-replay server available on port 9093.
+
+There are a number of options for how to launch a local server, for more details (https://developer.mozilla.org/en-US/docs/Learn_web_development/Howto/Tools_and_setup/set_up_a_local_testing_server#running_a_simple_local_http_server). An easy one which is available by default on most linux distributions is to use python:
+
+`python3 -m http.server 9000`
 
 ## Development
 

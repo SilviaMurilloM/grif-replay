@@ -123,6 +123,8 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
       if( strcmp(url_args[2], "dir") == 0 ){
          send_datafile_list(url_args[3], fd, 0);
       } else {
+         sprintf(tmp,"bad argument:%s in getdatafileList\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg:%s in getdatafileList\n", url_args[2]);
       }
    } else
@@ -130,6 +132,8 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
       if( strcmp(url_args[2], "dir") == 0 ){
          send_datafile_list(url_args[3], fd, 1);
       } else {
+         sprintf(tmp,"bad argument:%s in getdatafileList\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg:%s in getdatafileList\n", url_args[2]);
       }
    } else
@@ -137,6 +141,8 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
       if( strcmp(url_args[2], "dir") == 0 ){
          send_histofile_list(url_args[3], fd);
       } else {
+         sprintf(tmp,"bad argument:%s in gethistofileList\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg:%s in gethistofileList\n", url_args[2]);
       }
    } else
@@ -144,16 +150,22 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
       send_sort_status(fd);
    } else
    if( strcmp(ptr, "terminateServer") == 0 ){ /* -----------------------*/
+      send_header(fd, APP_JSON);
       shutdown_server = 1; return(0);
    } else
    if( strcmp(ptr, "setSortStatus") == 0 ){ /* -----------------------*/
       if( strcmp(url_args[2], "status") != 0 ){
+         sprintf(tmp,"bad argument:%s in setSortStatus\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg:%s in setSortStatus\n", url_args[2]);
       }
       if( sscanf(url_args[3],"%d", &value) < 1 ){
+         sprintf(tmp,"setSortStatus:cant Read value: %s\n",url_args[3]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"setSortStatus:cantRead val:%s\n",url_args[3]);
          return(-1);
       }
+      send_header(fd, APP_JSON);
       sort_stat = get_sort_status();
       sort_stat->reorder       =  value     & 3;
       sort_stat->single_thread = (value>>2) & 1;
@@ -162,28 +174,39 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
    } else
    if( strcmp(ptr, "setCoincLimit") == 0 ){ /* -----------------------*/
       if( strcmp(url_args[2], "limit") != 0 ){
+         sprintf(tmp,"bad argument:%s in setCoincLimit\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg:%s in setCoincLimit\n", url_args[2]);
       }
       if( sscanf(url_args[3],"%d", &value) < 1 ){
+         sprintf(tmp,"setCoincLimit:cant Read value: %s\n",url_args[3]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"setCoincLimit:cantRead val:%s\n",url_args[3]);
          return(-1);
       }
+      send_header(fd, APP_JSON);
       coinc_events_cutoff = value;
       return(0);
    } else
    if( strcmp(ptr, "endCurrentFile") == 0 ){ /* -----------------------*/
+      send_header(fd, APP_JSON);
       end_current_sortfile(fd);
    } else
    if( strcmp(ptr, "openHistofile") == 0 ){ /* ---------------------- */
       if( strncmp(url_args[2],"filename",8) == 0 ){
+         send_header(fd, APP_JSON);
          read_histofile(url_args[3], 0);
       } else {
+         sprintf(tmp,"bad argument:%s in openHistoFile\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg:%s in openHistoFile\n", url_args[2]);
       }
    } else
    if( strcmp(ptr, "addDatafile") == 0 ){ /* ---- sort file ---------*/
       histodir = configdir = calsrc = host = expt = NULL;
       if( strcmp(url_args[2], "filename") != 0 ){
+         sprintf(tmp,"bad argument:%s in addDataFile\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg:%s in addDataFile\n", url_args[2]);
       }
       if( strcmp(url_args[3],"ONLINE") == 0 ){
@@ -195,6 +218,8 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
             } else if( strcmp(url_args[4], "histodir") == 0 ){
                histodir = url_args[5];
             } else {
+               sprintf(tmp,"bad argument:%s in addDataFile\n",url_args[4]);
+               send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
                fprintf(stderr,"bad arg:%s in addDataFile\n", url_args[4]);
             }
          }
@@ -206,6 +231,8 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
             } else if( strcmp(url_args[6], "histodir") == 0 ){
                histodir = url_args[7];
             } else {
+               sprintf(tmp,"bad argument:%s in addDataFile\n",url_args[6]);
+               send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
                fprintf(stderr,"bad arg:%s in addDataFile\n", url_args[6]);
             }
          }
@@ -217,9 +244,12 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
             } else if( strcmp(url_args[8], "histodir") == 0 ){
                histodir = url_args[9];
             } else {
+               sprintf(tmp,"bad argument:%s in addDataFile\n",url_args[8]);
+               send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
                fprintf(stderr,"bad arg:%s in addDataFile\n", url_args[8]);
             }
          }
+         send_header(fd, APP_JSON); // This header indicates success to the client
          add_sortfile(url_args[3], histodir, host, expt);
       } else {
          if( narg > 4 ){
@@ -230,6 +260,8 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
             } else if( strcmp(url_args[4], "calibrationSource") == 0 ){
                calsrc = url_args[5];
             } else {
+               sprintf(tmp,"bad argument:%s in addDataFile\n",url_args[4]);
+               send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
                fprintf(stderr,"bad arg:%s in addDataFile\n", url_args[4]);
             }
          }
@@ -241,6 +273,8 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
             } else if( strcmp(url_args[6], "calibrationSource") == 0 ){
                calsrc = url_args[7];
             } else {
+               sprintf(tmp,"bad argument:%s in addDataFile\n",url_args[6]);
+               send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
                fprintf(stderr,"bad arg:%s in addDataFile\n", url_args[6]);
             }
          }
@@ -252,100 +286,153 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
             } else if( strcmp(url_args[8], "calibrationSource") == 0 ){
                calsrc = url_args[9];
             } else {
+               sprintf(tmp,"bad argument:%s in addDataFile\n",url_args[8]);
+               send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
                fprintf(stderr,"bad arg:%s in addDataFile\n", url_args[8]);
             }
          }
+         send_header(fd, APP_JSON); // This header indicates success to the client
          add_sortfile(url_args[3], histodir, configdir, calsrc);
       }
    } else
    if( strcmp(ptr, "getDatainfo") == 0 ){ /* ---- file info ---------*/
       if( strcmp(url_args[2], "filename") != 0 ){
+         sprintf(tmp,"bad argument:%s in getDatainfo\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg:%s in getDatainfo\n", url_args[2]);
       }
       send_file_details(url_args[3], fd);
    } else
    if( strcmp(ptr, "addGlobal") == 0 ){ /* ---------------------- */
       if( narg != 8 ){
+         sprintf(tmp,"wrong number of arguments[%d] in addGlobal\n",narg);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"wrong #arg[%d] in addGlobal\n", narg); return(-1);
       }
       if( strcmp(url_args[2],"globalname") != 0 ){
+         sprintf(tmp,"Bad argument2[%s] in addGlobal\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg2[%s] in addGlobal\n",url_args[2]); return(-1);
       }
       if( strcmp(url_args[4],"globalmin") != 0 ){
+         sprintf(tmp,"Bad argument3[%s] in addGlobal\n",url_args[4]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg3[%s] in addGlobal\n",url_args[4]); return(-1);
       }
       if( sscanf(url_args[5],"%d", &value) < 1 ){
+         sprintf(tmp,"addGlobal: cant Read value: %s\n",url_args[5]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"addGlobal:cantRead val:%s\n",url_args[5]);return(-1);
       }
       if( strcmp(url_args[6],"globalmax") != 0 ){
+         sprintf(tmp,"Bad argument4[%s] in addGlobal\n",url_args[6]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg4[%s] in addGlobal\n",url_args[6]); return(-1);
       }
       if( sscanf(url_args[7],"%d", &val2) < 1 ){
+         sprintf(tmp,"addGlobal: cant Read value: %s\n",url_args[7]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"addGlobal:cantRead val:%s\n",url_args[7]);return(-1);
       }
+      send_header(fd, APP_JSON);
       add_global(configs[0], url_args[3], value, val2);
    } else
    if( strcmp(ptr, "removeGlobal") == 0 ){ /* -------------------- */
       if( narg != 4 ){
+         sprintf(tmp,"wrong number of arguments[%d] in removeGlobal\n",narg);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"wrong #arg[%d] in removeGlobal\n", narg); return(-1);
       }
       if( strcmp(url_args[2],"globalname") != 0 ){
+         sprintf(tmp,"Bad argument2[%s] in removeGlobal\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg2[%s] in removeGlobal\n",url_args[2]);return(-1);
       }
+      send_header(fd, APP_JSON);
       remove_global(configs[0], url_args[3]);
    } else
    if( strcmp(ptr, "addCond") == 0 ){ /* ---------------------- */
       if( narg != 10 ){
+         sprintf(tmp,"wrong number of arguments[%d] in addCond\n",narg);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"wrong #arg[%d] in addCond\n", narg); return(-1);
       }
       if( strcmp(url_args[2],"condname") != 0 ){
+         sprintf(tmp,"Bad argument2[%s] in addCond\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg2[%s] in addCond\n", url_args[2]); return(-1);
       }
       if( strcmp(url_args[4],"varname0") != 0 ){
+         sprintf(tmp,"Bad argument3[%s] in addCond\n",url_args[4]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg3[%s] in addCond\n", url_args[4]); return(-1);
       }
       if( strcmp(url_args[6],"op0") != 0 ){
+         sprintf(tmp,"Bad argument4[%s] in addCond\n",url_args[6]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg4[%s] in addCond\n", url_args[6]); return(-1);
       }
       if( strcmp(url_args[8],"value0") != 0 ){
+         sprintf(tmp,"Bad argument5[%s] in addCond\n",url_args[8]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg5[%s] in addCond\n", url_args[8]); return(-1);
       }
       if( sscanf(url_args[9],"%d", &value) < 1 ){
+         sprintf(tmp,"addCond: cant Read value: %s\n",url_args[9]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"addCond:cantRead value:%s\n",url_args[9]);return(-1);
       }
+      send_header(fd, APP_JSON);
       add_cond(configs[0], url_args[3], url_args[5], url_args[7], value);
    } else
    if( strcmp(ptr, "removeCond") == 0 ){ /* -------------------- */
       if( narg != 4 ){
+         sprintf(tmp,"wrong number of arguments[%d] in removeCond\n",narg);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"wrong #arg[%d] in removeCond\n", narg); return(-1);
       }
       if( strcmp(url_args[2],"condname") != 0 ){
+         sprintf(tmp,"Bad argument2[%s] in removeCond\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg2[%s] in removeCond\n",url_args[2]);return(-1);
       }
+      send_header(fd, APP_JSON);
       remove_cond(configs[0], url_args[3]);
    } else
    if( strcmp(ptr, "addGate") == 0 ){ /* ---------------------- */
       if( narg < 10 ){
+         sprintf(tmp,"wrong number of arguments[%d] in addGate\n",narg);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"wrong #arg[%d] in addGate\n", narg); return(-1);
       }
       if( strcmp(url_args[2],"gatename") != 0 ){
+         sprintf(tmp,"Bad argument2[%s] in addGate\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg2[%s] in addGate\n", url_args[2]); return(-1);
       }
       add_gate(configs[0], url_args[3]);
       i = 4; while( i < narg ){
          if( strncmp(url_args[i],"varname", 7) != 0 ){
+            sprintf(tmp,"Bad argument%d[%s] in addGate\n",i,url_args[2]);
+            send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
             fprintf(stderr,"bad arg%d[%s] in addGate\n", i, url_args[i]);
             return(-1);
          }
          if( strncmp(url_args[i+2],"op", 2) != 0 ){
+            sprintf(tmp,"Bad argument%d[%s] in addGate\n",i+2,url_args[i+2]);
+            send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
             fprintf(stderr,"bad arg%d[%s] in addGate\n", i+2, url_args[i+2]);
             return(-1);
          }
          if( strncmp(url_args[i+4],"value", 5) != 0 ){
+            sprintf(tmp,"Bad argument%d[%s] in addGate\n",i+4,url_args[i+4]);
+            send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
             fprintf(stderr,"bad arg%d[%s] in addGate\n", i+4, url_args[i+4]);
             return(-1);
          }
          if( sscanf(url_args[i+5],"%d", &value) < 1 ){
+            sprintf(tmp,"addGate: cant Read value: %s\n",url_args[i+5]);
+            send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
             fprintf(stderr,"addGate:cantRead value:%s\n", url_args[i+5]);
             return(-1);
          }
@@ -355,92 +442,146 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
          add_cond_to_gate(configs[0], url_args[3], tmp);
          i += 6;
      }
+     send_header(fd, APP_JSON);
    } else
    if( strcmp(ptr, "removeGate") == 0 ){ /* -------------------- */
       if( narg != 4 ){
+         sprintf(tmp,"wrong number of arguments[%d] in removeGate\n",narg);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"wrong #arg[%d] in removeGate\n", narg); return(-1);
       }
       if( strcmp(url_args[2],"gatename") != 0 ){
+         sprintf(tmp,"Bad argument2[%s] in removeGate\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg2[%s] in removeGate\n",url_args[2]);return(-1);
       }
+      send_header(fd, APP_JSON);
       remove_gate(configs[0], url_args[3]);
    } else
    if( strcmp(ptr, "applyGate") == 0 ){ /* ---------------------- */
       if( narg != 6 ){
+         sprintf(tmp,"wrong number of arguments[%d] in applyGate\n",narg);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"wrong #arg[%d] in applyGate\n", narg); return(-1);
       }
       if( strcmp(url_args[2],"gatename") != 0 ){
+         sprintf(tmp,"Bad argument2[%s] in applyGate\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg2[%s] in applyGate\n",url_args[2]);return(-1);
       }
       if( strcmp(url_args[4],"histoname") != 0 ){
+         sprintf(tmp,"Bad argument3[%s] in applyGate\n",url_args[4]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg3[%s] in applyGate\n",url_args[4]);return(-1);
       }
+      send_header(fd, APP_JSON);
       apply_gate(configs[0], url_args[3], url_args[5]);
    } else
    if( strcmp(ptr, "unapplyGate") == 0 ){ /* -------------------- */
       if( narg != 6 ){
+         sprintf(tmp,"wrong number of arguments[%d] in unapplyGate\n",narg);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"wrong #arg[%d] in unapplyGate\n", narg); return(-1);
       }
       if( strcmp(url_args[2],"gatename") != 0 ){
+         sprintf(tmp,"Bad argument2[%s] in unapplyGate\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"unapplyGate:bad arg2[%s]\n",url_args[2]);return(-1);
       }
       if( strcmp(url_args[4],"histoname") != 0 ){
+         sprintf(tmp,"Bad argument3[%s] in applyGate\n",url_args[4]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"unapplyGate:bad arg3[%s]\n",url_args[4]);return(-1);
       }
+      send_header(fd, APP_JSON);
       unapply_gate(configs[0], url_args[3], url_args[5]);
    } else
    if( strcmp(ptr, "addHistogram") == 0 ){ /* ---------------------- */
       if( narg < 15 ){
+         sprintf(tmp,"wrong number of arguments[%d] in addHistogram\n",narg);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"too few #arg[%d] in addHistogram\n",narg);return(-1);
       }
       if( strcmp(url_args[2],"name") != 0 ){
+         sprintf(tmp,"Bad argument2[%s] in addHistogram\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg2[%s] in addHisto\n",url_args[2]); return(-1);
       }
       if( strcmp(url_args[4],"title") != 0 ){
-         fprintf(stderr,"bad arg2[%s] in addHisto\n",url_args[4]); return(-1);
+         sprintf(tmp,"Bad argument3[%s] in addHistogram\n",url_args[4]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"bad arg3[%s] in addHisto\n",url_args[4]); return(-1);
       }
       if( strcmp(url_args[6],"path") != 0 ){
+         sprintf(tmp,"Bad argument4[%s] in addHistogram\n",url_args[6]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg4[%s] in addHisto\n",url_args[6]); return(-1);
       }
       if( strcmp(url_args[8],"xvarname") != 0 ){
+         sprintf(tmp,"Bad argument6[%s] in addHistogram\n",url_args[8]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg6[%s] in addHisto\n",url_args[8]); return(-1);
       }
       if( strcmp(url_args[10],"xbins") != 0 ){
+         sprintf(tmp,"Bad argument8[%s] in addHistogram\n",url_args[10]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg8[%s] in addHisto\n",url_args[10]); return(-1);
       }
       if( sscanf(url_args[11],"%d", &xbins) < 1 ){
+         sprintf(tmp,"addHistogram: cant Read xbins[%s]\n",url_args[11]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"addHisto:cantRd xbins[%s]\n",url_args[11]);return(-1);
       }
       if( strcmp(url_args[12],"xmin") != 0 ){
+         sprintf(tmp,"Bad argument10[%s] in addHistogram\n",url_args[12]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg10[%s] in addHisto\n",url_args[12]);return(-1);
       }
       if( sscanf(url_args[13],"%d", &xmin) < 1 ){
+         sprintf(tmp,"addHistogram: cant Read xmin[%s]\n",url_args[13]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"addHisto:cantRd xmin[%s]\n",url_args[13]);return(-1);
       }
       if( strcmp(url_args[14],"xmax") != 0 ){
+         sprintf(tmp,"Bad argument12[%s] in addHistogram\n",url_args[14]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg12[%s] in addHisto\n",url_args[14]);return(-1);
       }
       if( sscanf(url_args[15],"%d", &xmax) < 1 ){
+         sprintf(tmp,"addHistogram: cant Read xmax[%s]\n",url_args[15]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"addHisto:cantRd xmax[%s]\n",url_args[15]);return(-1);
       }
       ybins = 0;
       if( strcmp(url_args[16],"yvarname") == 0 ){
          if( strcmp(url_args[18],"ybins") != 0 ){
+            sprintf(tmp,"Bad argument16[%s] in addHistogram\n",url_args[18]);
+            send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
             fprintf(stderr,"addHisto:bad arg16[%s]\n",url_args[18]);return(-1);
          }
          if( sscanf(url_args[19],"%d", &ybins) < 1 ){
+            sprintf(tmp,"addHistogram: cant Read y bins[%s]\n",url_args[19]);
+            send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
             fprintf(stderr,"addHisto: ?ybins?[%s]\n",url_args[19]);return(-1);
          }
          if( strcmp(url_args[20],"ymin") != 0 ){
+            sprintf(tmp,"Bad argument18[%s] in addHistogram\n",url_args[20]);
+            send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
             fprintf(stderr,"addHisto:bad arg18[%s]\n",url_args[20]);return(-1);
          }
          if( sscanf(url_args[21],"%d", &ymin) < 1 ){
+            sprintf(tmp,"addHistogram: cant Read ymin[%s]\n",url_args[21]);
+            send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
             fprintf(stderr,"addHisto: ?ymin?[%s]\n",url_args[21]);return(-1);
          }
          if( strcmp(url_args[22],"ymax") != 0 ){
+            sprintf(tmp,"Bad argument20[%s] in addHistogram\n",url_args[22]);
+            send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
             fprintf(stderr,"addHisto:bad arg20[%s]\n",url_args[22]);return(-1);
          }
          if( sscanf(url_args[23],"%d", &ymax) < 1 ){
+            sprintf(tmp,"addHistogram: cant Read ymax[%s]\n",url_args[23]);
+            send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
             fprintf(stderr,"addHisto: ?ymax?[%s]\n",url_args[23]);return(-1);
          }
          add_histo(configs[0], url_args[3], url_args[5], url_args[7], xbins, url_args[9], xmin, xmax, ybins, url_args[17], ymin, ymax);
@@ -451,19 +592,27 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
       }
       for(;i<narg; i+=2){
          if( sscanf(url_args[i], "gate%d", &j) < 1 ){
+             sprintf(tmp,"addHistogram: bad arg%d[%s]\n",i,url_args[i]);
+             send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
              fprintf(stderr,"addHisto: bad arg%d[%s]\n", i, url_args[i]);
              return(-1);
          }
          apply_gate(configs[0], url_args[3], url_args[i+1]);
       }
+      send_header(fd, APP_JSON);
    } else
    if( strcmp(ptr, "removeHistogram") == 0 ){ /* -------------------- */
       if( narg != 4 ){
+         sprintf(tmp,"wrong number of arguments[%d] in removeHistogram\n",narg);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"wrong #arg[%d] in removeHisto\n", narg); return(-1);
       }
       if( strcmp(url_args[2],"histoname") != 0 ){
+         sprintf(tmp,"Bad argument2[%s] in removeHistogram\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg2[%s] in removeHist\n",url_args[2]);return(-1);
       }
+      send_header(fd, APP_JSON);
       remove_histo(configs[0], url_args[3]);
    } else
    if( strcmp(ptr, "sumHistos") == 0 ){ /* -------------------- */
@@ -472,46 +621,69 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
    if( strcmp(ptr, "setCalibration") == 0 ){ /* -------------------- */
       set_calibration(configs[0], narg, url_args, fd);
    } else
+   if( strcmp(ptr, "setPileupCorrection") == 0 ){ /* -------------------- */
+      set_pileup_correction(configs[0], narg, url_args, fd);
+   } else
    if( strcmp(ptr, "setDataDirectory") == 0 ){ /* -------------------- */
+      send_header(fd, APP_JSON);
       set_directory(configs[0], "Data", url_args[3]);
    } else
    if( strcmp(ptr, "setHistoDirectory") == 0 ){ /* -------------------- */
+      send_header(fd, APP_JSON);
       set_directory(configs[0], "Histo", url_args[3]);
    } else
    if( strcmp(ptr, "setConfigDirectory") == 0 ){ /* -------------------- */
+      send_header(fd, APP_JSON);
       set_directory(configs[0], "Config", url_args[3]);
    } else
    if( strcmp(ptr, "saveConfig") == 0 ){ /* -------------------- */
       if( narg != 4 ){
+         sprintf(tmp,"wrong number of arguments[%d] in saveConfig\n",narg);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"wrong #arg[%d] in saveConfig\n", narg); return(-1);
       }
       if( strcmp(url_args[2],"filename") != 0 ){
+         sprintf(tmp,"Bad argument2[%s] in saveConfig\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg2[%s] in saveConfig\n",url_args[2]);return(-1);
       }
+      send_header(fd, APP_JSON);
       save_config(configs[0], url_args[3], 1); // 1 => overwrite
    } else
    if( strcmp(ptr, "loadConfig") == 0 ){ /* -------------------- */
       if( narg != 4 ){
+         sprintf(tmp,"wrong number of arguments[%d] in loadConfig\n",narg);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"wrong #arg[%d] in loadConfig\n", narg); return(-1);
       }
       if( strcmp(url_args[2],"filename") != 0 ){
+         sprintf(tmp,"Bad argument2[%s] in loadConfig\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"bad arg2[%s] in loadConfig\n",url_args[2]);return(-1);
       }
+      send_header(fd, APP_JSON);
       load_config(configs[0], url_args[3], NULL);
    } else
    if( strcmp(ptr, "viewConfig") == 0 ){ /* -------------------- */
       if( web_fp == NULL ){
          if( (web_fp=fdopen(fd,"r+")) == NULL ){
-            fprintf(stderr,"cviewConfig can't fdopen web fd\n"); return(-1);
+            send_http_error_response(fd, STATUS_CODE_422,(char*)"viewConfig can't fdopen web fd");
+            fprintf(stderr,"viewConfig can't fdopen web fd\n"); return(-1);
          }
       }
       if( strcmp(url_args[2],"filename") == 0 ){
-         if( (cfg=read_histofile(url_args[3], 1)) == NULL ){return(-1);}
-         //write_config(cfg, web_fp); fflush(web_fp);
+         if( (cfg=read_histofile(url_args[3], 1)) == NULL ){
+            send_http_error_response(fd, STATUS_CODE_404,(char*)"viewConfig can't read requested filename");
+            fprintf(stderr,"viewConfig can't read requested filename, %s\n",url_args[3]);
+           return(-1);
+         }
          sprintf(tmp,"/tmp/tmp.json");
          if( (tmp_fp = fopen(tmp,"w+")) == NULL ){ // create if needed, truncate to zero
+            send_http_error_response(fd, STATUS_CODE_500,(char*)"viewConfig can't open tmp file to write");
             fprintf(stderr,"can't open tmp file:%s to write\n", tmp);
+           //return(-1);
          }
+         send_header(fd, APP_JSON);
          write_config(cfg, tmp_fp); fseek(tmp_fp, 0, SEEK_SET);
          while( fgets(tmp, 128, tmp_fp) != NULL ){
             put_line(fd, tmp, strlen(tmp) );
@@ -524,8 +696,11 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
          // hack workaround for now ...
          sprintf(tmp,"/tmp/tmp.json");
          if( (tmp_fp = fopen(tmp,"w+")) == NULL ){ // create if needed, truncate to zero
+            send_http_error_response(fd, STATUS_CODE_500,(char*)"viewConfig can't open tmp file to write");
             fprintf(stderr,"can't open tmp file:%s to write\n", tmp);
+           //return(-1);
          }
+         send_header(fd, APP_JSON);
          write_config(configs[0], tmp_fp); fseek(tmp_fp, 0, SEEK_SET);
          while( fgets(tmp, 128, tmp_fp) != NULL ){
             put_line(fd, tmp, strlen(tmp) );
@@ -540,9 +715,8 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
          send_spectrum( (narg-2)/2, url_args, NULL, fd);
       }
    } else {
-      //if( strcmp(ptr, "jset") == 0 ){
-      //   jset_cmd( narg, url_args, fd);
-      //} else {
+         sprintf(tmp,"Unknown Command: %s\n",ptr);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
       fprintf(stderr,"Unknown Command:%s\n", ptr);
    }
    return(0);
@@ -618,6 +792,15 @@ int write_config(Config *cfg, FILE *fp)
    fprintf(fp,"      {\"Calibrations\" : [\n");
    for(i=0; i<cfg->ncal; i++){ calib = cfg->calib[i];
       fprintf(fp,"%9s{\"name\" : \"%s\" , \"address\" : %d , \"datatype\" : %d , \"offset\" : %f , \"gain\" : %f , \"quad\" : %e ", "", calib->name, calib->address, calib->datatype, calib->offset, calib->gain, calib->quad );
+      if(calib->pileupk1[0] != -1 && !isnan(calib->pileupk1[0])){
+        fprintf(fp,", \"pileupk1\" : [ %f , %f , %e , %e , %e , %e , %e ]",calib->pileupk1[0],calib->pileupk1[1],calib->pileupk1[2],calib->pileupk1[3],calib->pileupk1[4],calib->pileupk1[5],calib->pileupk1[6]);
+        fprintf(fp,", \"pileupk2\" : [ %f , %f , %e , %e , %e , %e , %e ]",calib->pileupk2[0],calib->pileupk2[1],calib->pileupk2[2],calib->pileupk2[3],calib->pileupk2[4],calib->pileupk2[5],calib->pileupk2[6]);
+        fprintf(fp,", \"pileupE1\" : [ %f , %f , %e , %e , %e , %e , %e ]",calib->pileupE1[0],calib->pileupE1[1],calib->pileupE1[2],calib->pileupE1[3],calib->pileupE1[4],calib->pileupE1[5],calib->pileupE1[6]);
+      }else{
+        fprintf(fp,", \"pileupk1\" : [ %d , %d , %d , %d , %d , %d , %d ]",1,0,0,0,0,0,0);
+        fprintf(fp,", \"pileupk2\" : [ %d , %d , %d , %d , %d , %d , %d ]",1,0,0,0,0,0,0);
+        fprintf(fp,", \"pileupE1\" : [ %d , %d , %d , %d , %d , %d , %d ]",0,0,0,0,0,0,0);
+      }
       fprintf(fp, "%s", ( i<cfg->ncal-1 ) ? "},\n" : "}\n" );
    }
    fprintf(fp,"      ]},\n");
@@ -651,6 +834,7 @@ int load_config(Config *cfg, char *filename, char *buffer)
    int i,j, len, value, val2, val3, val4, val5, val6, address, type, instring;
    char *ptr, *name, *valstr, *title, *path, *var, *var2, op[8], tmp[80];
    float gain, offset, quad;
+   float puk1[7], puk2[7], puE1[7];
    Histogram *histo;
    Config *tmp_cfg;
    Cond *cond;
@@ -923,7 +1107,7 @@ int load_config(Config *cfg, char *filename, char *buffer)
       return(-1);
    } ptr += 17;
    while( 1 ){ // Calibrations
-      if( strncmp(ptr,"]},", 3) == 0 ){ ptr+=3; break; }// empty section
+      if( strncmp(ptr,"]},", 3) == 0 ){ ptr+=3; fprintf(stdout,"Calibrations section empty so breaking here.\n"); break; }// empty section
       if( strncmp(ptr,"{\"name\":\"", 9) != 0 ){
          fprintf(stderr,"load_config: errS byte %ld\n", ptr-config_data);
          return(-1);
@@ -944,41 +1128,78 @@ int load_config(Config *cfg, char *filename, char *buffer)
       } ptr += 11; valstr = ptr;
       while( isdigit(*ptr) || *ptr=='-' || *ptr=='.' ){++ptr;} *ptr++ = 0;
       if( sscanf( valstr, "%d", &type) < 1 ){
-         fprintf(stderr,"load_config:errX byte %ld\n", ptr-config_data);
-         return(-1);
+        fprintf(stderr,"load_config:errX byte %ld\n", ptr-config_data);
+        return(-1);
       }
       if( strncmp(ptr,"\"offset\":",9) != 0 ){
-         fprintf(stderr,"load_config: errT byte %ld\n", ptr-config_data);
-         return(-1);
+        fprintf(stderr,"load_config: errT byte %ld\n", ptr-config_data);
+        return(-1);
       } ptr += 9; valstr = ptr;
       while( isdigit(*ptr) || *ptr=='-' || *ptr=='.' ){++ptr;} *ptr++ = 0;
       if( sscanf( valstr, "%f", &offset) < 1 ){
-         fprintf(stderr,"load_config:errU byte %ld\n", ptr-config_data);
-         return(-1);
+        fprintf(stderr,"load_config:errU byte %ld\n", ptr-config_data);
+        return(-1);
       }
       if( strncmp(ptr,"\"gain\":",7) != 0 ){
-         fprintf(stderr,"load_config: errV byte %ld\n", ptr-config_data);
-         return(-1);
+        fprintf(stderr,"load_config: errV byte %ld\n", ptr-config_data);
+        return(-1);
       } ptr += 7; valstr = ptr;
       while( isdigit(*ptr) || *ptr=='-' || *ptr=='.' ){++ptr;} *ptr++ = 0;
       if( sscanf( valstr, "%f", &gain) < 1 ){
-         fprintf(stderr,"load_config:errX byte %ld\n", ptr-config_data);
-         return(-1);
+        fprintf(stderr,"load_config:errX byte %ld\n", ptr-config_data);
+        return(-1);
       }
       if( strncmp(ptr,"\"quad\":",7) != 0 ){
-         fprintf(stderr,"load_config: errY byte %ld\n", ptr-config_data);
-         return(-1);
+        fprintf(stderr,"load_config: errY byte %ld\n", ptr-config_data);
+        return(-1);
       } ptr += 7; valstr = ptr;
       while(isdigit(*ptr)||*ptr=='.'||*ptr=='-'||*ptr=='+'||*ptr=='e'){++ptr;}
       *ptr++ = 0; // last char written over with 0 was '}'
       if( sscanf( valstr, "%f", &quad) < 1 ){
-         fprintf(stderr,"load_config:errZ byte %ld\n", ptr-config_data);
-         return(-1);
+        fprintf(stderr,"load_config:errZ byte %ld\n", ptr-config_data);
+        return(-1);
       }
-      cfg->lock=1; edit_calibration(cfg,name,offset,gain,quad,address,type,1); cfg->lock=0;
+      // The pileup correction parameters were introduced in Feb 2025.
+      // Config files before this date will not have pileup correcitons, and after this they are optional
+      if( strncmp(ptr,"\"pileupk1\":",11) == 0 ){
+        ptr += 11; valstr = ptr;
+        if( sscanf(valstr, "[%f,%f,%e,%e,%e,%e,%e], ", &puk1[0],&puk1[1],&puk1[2],&puk1[3],&puk1[4],&puk1[5],&puk1[6]) != 7 ){
+          fprintf(stderr,"load_config:errPUA byte %ld\n", ptr-config_data);
+          return(-1);
+        }
+        while(*ptr!='\"'){++ptr;}
+        if( strncmp(ptr,"\"pileupk2\":",11) != 0 ){
+          fprintf(stderr,"load_config:errPUB byte %ld\n", ptr-config_data);
+          return(-1);
+        } ptr += 11; valstr = ptr;
+        if( sscanf(valstr, "[%f,%f,%e,%e,%e,%e,%e], ", &puk2[0],&puk2[1],&puk2[2],&puk2[3],&puk2[4],&puk2[5],&puk2[6]) != 7 ){
+          fprintf(stderr,"load_config:errPUC byte %ld\n", ptr-config_data);
+          return(-1);
+        }
+        //while(isdigit(*ptr)||*ptr=='.'||*ptr=='-'||*ptr=='+'||*ptr=='e'||*ptr==','||*ptr=='['||*ptr==']'){++ptr;}
+        while(*ptr!='\"'){++ptr;}
+        if( strncmp(ptr,"\"pileupE1\":",11) != 0 ){
+          fprintf(stderr,"load_config:errPUD byte %ld\n", ptr-config_data);
+          return(-1);
+        } ptr += 11; valstr = ptr;
+        if( sscanf(valstr, "[%f,%f,%e,%e,%e,%e,%e]", &puE1[0],&puE1[1],&puE1[2],&puE1[3],&puE1[4],&puE1[5],&puE1[6]) != 7 ){
+          fprintf(stderr,"load_config:errPUE byte %ld\n", ptr-config_data);
+          return(-1);
+        }
+        //while(isdigit(*ptr)||*ptr=='.'||*ptr=='-'||*ptr=='+'||*ptr=='e'||*ptr==','||*ptr=='['||*ptr==']'){++ptr;}
+        while(*ptr!='}'){++ptr;}
+        ++ptr;
+      }else{
+           // Initialize pileup parameters to default values
+           for(i=0; i<7; i++){
+             puk1[i] = puk2[i] = puE1[i] = 0;
+           }
+           puk1[0] = puk2[0] = 1; // set default factor as 1 not zero
+      }
+      cfg->lock=1; edit_calibration(cfg,name,offset,gain,quad,puk1,puk2,puE1,address,type,1); cfg->lock=0;
       if( *ptr++ == ',' ){ continue; } // have skipped ']' if not
       ptr+=2; break; // skip '},'
-   }
+    }
    if( strncmp(ptr,"{\"Directories\":[", 16) != 0 ){
       fprintf(stderr,"load_config: errZA byte %ld\n", ptr-config_data);
       return(-1);
@@ -1051,6 +1272,7 @@ int init_config()
    }
    init_default_config(cfg);  // populate default "test" config during testing
    load_config(cfg, DEFAULT_CONFIG, NULL); // attempt to load, ignore any error
+   clear_calibrations(cfg); // Clear the calibrations to default values following server restart
    tmp = gethostname(hostname, 32);
    strtok(hostname, ".");
    fprintf(stdout,"Initial setup complete :-)\n\n");
@@ -1078,6 +1300,25 @@ int clear_config(Config *cfg)
    // used_sortvars, and user histos start empty and are filled randomly
    cfg->mtime = current_time;
    return(0);
+}
+
+int clear_calibrations(Config *cfg)
+{
+  float offset=0, gain=1, quad=0;
+  float puk1[7], puk2[7], puE1[7];
+  int i, address=-1, datatype=-1;
+
+  // Initialize values to defaults
+  for(i=0; i<7; i++){
+    puk1[i] = puk2[i] = puE1[i] = 0;
+  }
+  puk1[0] = puk2[0] = 1; // set default factor as 1 not zero
+
+  // delete any calibration values
+  for(i=0; i<cfg->ncal;     i++){
+    edit_calibration(cfg, cfg->calib[i]->name, offset, gain, quad, puk1, puk2, puE1, address, datatype, 1);
+  }
+  return(0);
 }
 
 int copy_config(Config *src, Config *dst)
@@ -1784,34 +2025,55 @@ Histogram *find_histo(Config *cfg, char *name)
 int set_calibration(Config *cfg, int num, char url_args[][STRING_LEN], int fd)
 {
    float offset, gain, quad;
+   float puk1[7], puk2[7], puE1[7];
    int i, address=-1, datatype=-1;
+   char tmp[128];
+
+   // Initialize values to -1
+   for(i=0; i<7; i++){
+     puk1[i] = puk2[i] = puE1[i] = -1;
+   }
 
    for(i=2; i<num; i+=8){
       if( strncmp(url_args[i], "channelName", 10) != 0 ){
+         sprintf(tmp,"set_calibration: expected \"channelName\" at %s\n",url_args[i]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"expected \"channelName\" at %s\n", url_args[i]);
          return(-1);
       }
       if( strncmp(url_args[i+2], "quad", 4) != 0 ){
+         sprintf(tmp,"set_calibration: expected \"quad\" at %s\n",url_args[i+2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"expected \"quad\" at %s\n", url_args[i+2]);
          return(-1);
       }
       if( sscanf(url_args[i+3], "%f", &quad) < 1 ){
+         sprintf(tmp,"set_calibration: can't read quad value, %s\n",url_args[i+3]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"can't read quad: %s\n", url_args[i+3]);
          return(-1);
       }
       if( strncmp(url_args[i+4], "gain", 4) != 0 ){
+         sprintf(tmp,"set_calibration: expected \"gain\" at %s\n",url_args[i+4]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"expected \"gain\" at %s\n", url_args[i+4]);
          return(-1);
       }
       if( sscanf(url_args[i+5], "%f", &gain) < 1 ){
+         sprintf(tmp,"set_calibration: can't read gain value, %s\n",url_args[i+5]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"can't read gain: %s\n", url_args[i+5]);
          return(-1);
       }
       if( strncmp(url_args[i+6], "offset", 6) != 0 ){
+         sprintf(tmp,"set_calibration: expected \"offset\" at %s\n",url_args[i+6]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"expected \"offset\" at %s\n", url_args[i+6]);
          return(-1);
       }
       if( sscanf(url_args[i+7], "%f", &offset) < 1 ){
+         sprintf(tmp,"set_calibration: can't read offset value, %s\n",url_args[i+7]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
          fprintf(stderr,"can't read offset: %s\n", url_args[i+7]);
          return(-1);
       }
@@ -1831,16 +2093,93 @@ int set_calibration(Config *cfg, int num, char url_args[][STRING_LEN], int fd)
 //         fprintf(stderr,"can't read datatype: %s\n", url_args[i+11]);
 //         return(-1);
 //      }
-      edit_calibration(cfg, url_args[i+1], offset, gain, quad,
+      edit_calibration(cfg, url_args[i+1], offset, gain, quad, puk1, puk2, puE1,
                        address, datatype, 1);
    }
    return(0);
 }
 
-int edit_calibration(Config *cfg, char *name, float offset, float gain, float quad, int address, int type, int overwrite)
+int set_pileup_correction(Config *cfg, int num, char url_args[][STRING_LEN], int fd)
+{
+   float offset=-1, gain=-1, quad=-1;
+   float puk1[7], puk2[7], puE1[7];
+   int i, address=-1, datatype=-1;
+   char tmp[128];
+
+// Initialize values to defaults
+for(i=0; i<7; i++){
+  puk1[i] = puk2[i] = puE1[i] = 0;
+}
+puk1[0] = puk2[0] = 1; // set default factor as 1 not zero
+
+   for(i=2; i<num; i+=8){
+      if( strncmp(url_args[i], "channelName", 10) != 0 ){
+         sprintf(tmp,"set_pileup_correction: expected \"channelName\" at %s\n",url_args[i]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"expected \"channelName\" at %s\n", url_args[i]);
+         return(-1);
+      }
+      if( strncmp(url_args[i+2], "pileupk1", 8) != 0 ){
+         sprintf(tmp,"set_pileup_correction: expected \"pileupk1\" at %s\n",url_args[i+2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"expected \"pileupk1\" at %s\n", url_args[i+2]);
+         return(-1);
+      }
+      if( sscanf(url_args[i+3], "%f,%f,%f,%f,%f,%f,%f", puk1,puk1+1,puk1+2,puk1+3,puk1+4,puk1+5,puk1+6) != 7 ){
+         sprintf(tmp,"set_pileup_correction: can't read pileup k1 value (expected 7 values), %s\n",url_args[i+3]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"can't read pileup k1, expected 7 values: %s\n", url_args[i+3]);
+         return(-1);
+      }
+      if( strncmp(url_args[i+4], "pileupk2", 8) != 0 ){
+         sprintf(tmp,"set_pileup_correction: expected \"pileupk2\" at %s\n",url_args[i+4]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"expected \"pileupk2\" at %s\n", url_args[i+4]);
+         return(-1);
+      }
+      if( sscanf(url_args[i+5], "%f,%f,%f,%f,%f,%f,%f", puk2,puk2+1,puk2+2,puk2+3,puk2+4,puk2+5,puk2+6) != 7 ){
+         sprintf(tmp,"set_pileup_correction: can't read pileup k2 value (expected 7 values), %s\n",url_args[i+5]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"can't read pileup k2, expected 7 values: %s\n", url_args[i+5]);
+         return(-1);
+      }
+      if( strncmp(url_args[i+6], "pileupE1", 8) != 0 ){
+         sprintf(tmp,"set_pileup_correction: expected \"pileupE1\" at %s\n",url_args[i+6]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"expected \"pileupE1\" at %s\n", url_args[i+6]);
+         return(-1);
+      }
+      if( sscanf(url_args[i+7], "%f,%f,%f,%f,%f,%f,%f", puE1,puE1+1,puE1+2,puE1+3,puE1+4,puE1+5,puE1+6) != 7 ){
+         sprintf(tmp,"set_pileup_correction: can't read pileup E1 value (expected 7 values), %s\n",url_args[i+7]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"can't read pileup E1, expected 7 values: %s\n", url_args[i+7]);
+         return(-1);
+      }
+//      if( strncmp(url_args[i+14], "address", 4) != 0 ){
+//         fprintf(stderr,"expected \"address\" at %s\n", url_args[i+14]);
+//         return(-1);
+//      }
+//      if( sscanf(url_args[i+15], "%d", &address) < 1 ){
+//         fprintf(stderr,"can't read address: %s\n", url_args[i+15]);
+//         return(-1);
+//      }
+//      if( strncmp(url_args[i+16], "datatype", 6) != 0 ){
+//         fprintf(stderr,"expected \"datatype\" at %s\n", url_args[i+16]);
+//         return(-1);
+//      }
+//      if( sscanf(url_args[i+17], "%d", &datatype) < 1 ){
+//         fprintf(stderr,"can't read datatype: %s\n", url_args[i+17]);
+//         return(-1);
+//      }
+    edit_calibration(cfg, url_args[i+1], offset, gain, quad, puk1, puk2, puE1, address, datatype, 1);
+   }
+   return(0);
+}
+
+int edit_calibration(Config *cfg, char *name, float offset, float gain, float quad, float puk1[7], float puk2[7], float puE1[7], int address, int type, int overwrite)
 {
    time_t current_time = time(NULL);
-   int i, len, arg;
+   int i,j, len, arg;
    Cal_coeff *cal;
 
    for(i=0; i<cfg->ncal; i++){ cal = cfg->calib[i];
@@ -1849,7 +2188,12 @@ int edit_calibration(Config *cfg, char *name, float offset, float gain, float qu
    }
    if( i < cfg->ncal ){ // calib already exists
       if( overwrite ){
-         cal->offset = offset; cal->gain = gain; cal->quad = quad;
+      if( offset != -1 ){ cal->offset = offset; }
+      if( gain   != -1 ){ cal->gain = gain; }
+      if( quad   != -1 ){ cal->quad = quad; }
+      if( puk1[0] != -1 ){ for(j=0; j<7; j++){cal->pileupk1[j] = puk1[j];} }
+      if( puk2[0] != -1 ){ for(j=0; j<7; j++){cal->pileupk2[j] = puk2[j];} }
+      if( puE1[0] != -1 ){ for(j=0; j<7; j++){cal->pileupE1[j] = puE1[j];} }
       }
       if( address != -1 ){
          cal->address = address;  cal->datatype = type;
@@ -1864,9 +2208,26 @@ int edit_calibration(Config *cfg, char *name, float offset, float gain, float qu
          len = 64;
       }
       memcpy(cal->name, name, len);
-      cal->offset = offset; cal->gain = gain; cal->quad = quad;
+      if( offset != -1 ){ cal->offset = offset; }else{ cal->offset = 0; }
+      if( gain   != -1 ){ cal->gain = gain; }else{ cal->gain = 1; }
+      if( quad   != -1 ){ cal->quad = quad; }else{ cal->quad = 0; }
+      if( puk1[0] != -1 ){
+        for(j=0; j<7; j++){ cal->pileupk1[j] = puk1[j]; }
+      }else{
+        cal->pileupk1[0]=1; cal->pileupk1[1]=0; cal->pileupk1[2]=0; cal->pileupk1[3]=0; cal->pileupk1[4]=0; cal->pileupk1[5]=0; cal->pileupk1[6]=0;
+      }
+      if( puk2[0] != -1 ){
+        for(j=0; j<7; j++){cal->pileupk2[j] = puk2[j]; }
+      }else{
+        cal->pileupk2[0]=1; cal->pileupk2[1]=0; cal->pileupk2[2]=0; cal->pileupk2[3]=0; cal->pileupk2[4]=0; cal->pileupk2[5]=0; cal->pileupk2[6]=0;
+      }
+      if( puE1[0] != -1 ){
+        for(j=0; j<7; j++){cal->pileupE1[j] = puE1[j]; }
+      }else{
+        cal->pileupE1[0]=0; cal->pileupE1[1]=0; cal->pileupE1[2]=0; cal->pileupE1[3]=0; cal->pileupE1[4]=0; cal->pileupE1[5]=0; cal->pileupE1[6]=0;
+      }
       cal->address = address;  cal->datatype = type;
-   }
+    }
    cfg->mtime = current_time;  save_config(cfg, DEFAULT_CONFIG, 1);
    return(0);
 }
@@ -1875,6 +2236,7 @@ int set_directory(Config *cfg, char *name, char *path)
 {
    time_t current_time = time(NULL);
    int len;
+
 
    if( (len=strlen(path)) >= SYS_PATH_LENGTH ){
       fprintf(stderr,"set_directory: path too long[%s]\n", path);
@@ -1926,7 +2288,6 @@ extern int sum_th1I(Config *dst_cfg, TH1I *dst, TH1I *src);
 int sum_histos(Config *cfg, int num, char url_args[][STRING_LEN], int fd)
 {
    Config *sum, *tmp, *tmp_conf;
-   float offset, gain, quad;
    int i, j, arg;
    FILE *fp;
 
@@ -2036,6 +2397,9 @@ int send_sort_status(int fd)
    Sortfile *tmp;
    long done;
 
+   // Send the response header
+   send_header(fd, APP_JSON);
+
    arg = get_sort_status();
    if( conftime == 0 ){ conftime = time(NULL); }
    if( arg->online_mode ){
@@ -2113,9 +2477,11 @@ int send_file_details(char *path, int fd)
    char tmp2[256];
    Sortfile *tmp;
    if( (tmp = calloc(sizeof(Sortfile), 1)) == NULL){
+      send_header(fd, APP_JSON);
       fprintf(stderr,"send_file_details: failed alloc\n");
       put_line(fd, " \n \n \n \n", 8 ); return(-1);
    }
+   send_header(fd, APP_JSON);
    read_datafile_info(tmp, path);
    sprintf(tmp2,"%s\n%s\n%s\n%s\n", tmp->file_info[0], tmp->file_info[1],
                                    tmp->file_info[2], tmp->file_info[3] );
@@ -2323,7 +2689,7 @@ char *subrun_filename(Sortfile *sort, int subrun)
 
    sprintf(tmp,"%d", sort->run); digits = strlen(tmp);
    len = strlen(name);
-   while( digits++ < sort->run_digits ){ name[len] = '0'; name[++len+1] = 0; }
+   while( digits++ < sort->run_digits ){ name[len] = '0'; name[1+len++] = 0; }
    sprintf(name+strlen(name),"%d_", sort->run);
 
    sprintf(tmp,"%d", subrun);  digits = strlen(tmp);
@@ -2441,6 +2807,8 @@ int send_datafile_list(char *path, int fd, int type)
    DIR *d;
 
    if( (d=opendir(path)) == NULL ){
+      sprintf(tmp,"can't open directory %s\n",path);
+      send_http_error_response(fd, STATUS_CODE_404,(char*)tmp);
       fprintf(stderr,"can't open directory %s\n", path);
       return(-1);
    }
@@ -2450,6 +2818,7 @@ int send_datafile_list(char *path, int fd, int type)
          fprintf(stderr,"send_datafile_list: failed alloc\n");
       }
    } else { tmp_srt = NULL; }
+   send_header(fd, APP_JSON);
    put_line(fd, " [ \n", 4 );
    while( (d_ent = readdir(d)) != NULL ){
       //fprintf(stdout,"File[%s] ...\n", d_ent->d_name);
@@ -2499,12 +2868,17 @@ int send_datafile_list(char *path, int fd, int type)
 int send_histofile_list(char *path, int fd)
 {
    int nlen, run, subrun, first_entry=1;
+   char tmp[128];
    struct dirent *d_ent;
    DIR *d;
    if( (d=opendir(path)) == NULL ){
+      sprintf(tmp,"can't open directory, %s\n",path);
+      send_http_error_response(fd, STATUS_CODE_404,(char*)tmp);
       fprintf(stderr,"can't open directory %s\n", path);
       return(-1);
    }
+
+   send_header(fd, APP_JSON);
    put_line(fd, " [ \n", 4 );
    while( (d_ent = readdir(d)) != NULL ){
       //fprintf(stdout,"File[%s] ...\n", d_ent->d_name);
@@ -2552,21 +2926,25 @@ int send_spectrum_list(char *cfgname, int fd)
    int i, type, ascend;
    char *name;
 
-   if( strlen(cfgname) != 0 ){
-      for(i=0; i<MAX_CONFIGS; i++){ if( configs[i] == NULL ){ continue; }
-         if(strcmp(configs[i]->name, cfgname) == 0){ cfg = configs[i]; break; }
-      }
-      if( i == MAX_CONFIGS ){
-         if( (cfg=read_histofile(cfgname,0)) == NULL ){
-            fprintf(stderr,"send_spec_list: can't find or read:%s\n", cfgname);
-            return(-1);
-         }
-      }
+     if( strlen(cfgname) != 0 ){
+       for(i=0; i<MAX_CONFIGS; i++){ if( configs[i] == NULL ){ continue; }
+       if(strcmp(configs[i]->name, cfgname) == 0){ cfg = configs[i]; break; }
+     }
+     if( i < MAX_CONFIGS ){ // Found this histogram file already open
+       // If the histogram file was open, clear this config in case the file on disk has been modified
+       remove_config(configs[i]);
+     }
+     // Now read the histogram file
+     if( (cfg=read_histofile(cfgname,0)) == NULL ){
+       fprintf(stderr,"send_spec_list: can't find or read:%s\n", cfgname);
+       return(-1);
+     }
    }
    if( (name = next_histotree_item(cfg, 1, &type, &ascend )) == NULL ){
       fprintf(stderr,"send_spectrum_list: EMPTY LIST\n");
       return(-1);
    }
+   send_header(fd, APP_JSON);
    put_line(fd, "{\n", 2 );
    while( (name = next_histotree_item(cfg, 0, &type, &ascend )) != NULL ){
       if( ascend < 0 ){
@@ -2654,8 +3032,10 @@ int send_spectrum(int num, char url_args[][STRING_LEN], char *name, int fd)
   }
   if( cfg == NULL || cfg->nhistos == 0 ){
     sprintf(tmp,"%s %s", HIST_HDR, HIST_TRL );
+    send_header(fd, APP_JSON);
     put_line(fd, tmp, strlen(tmp) ); return(-1);
   }
+  send_header(fd, APP_JSON);
   put_line(fd, HIST_HDR, strlen(HIST_HDR) );
   j = (name == NULL) ? 0 : 1;
   for(; j<num; j++){
@@ -2679,20 +3059,21 @@ int send_spectrum(int num, char url_args[][STRING_LEN], char *name, int fd)
         put_line(fd, tmp, strlen(tmp) );
       }
       put_line(fd, "]", 1 );
-    } else if( hist->type == INT_2D ){
+    } else if( hist->type == INT_2D || hist->type == INT_2D_SYMM ){
       xbins = hist->xbins; if( xbins > 8192 ){ xbins = 8192; }
       ybins = hist->ybins; if( ybins > 8192 ){ ybins = 8192; }
       if( (hist_data = malloc( xbins*ybins*sizeof(int) )) == NULL){
          fprintf(stderr,"can't alloc memory for sending 2d histo\n");
          continue;
       }
-      if( ! hist->symm ){
+         memset(hist_data, 0, xbins*ybins*sizeof(int) );
+      if( hist->symm == 0 ){
          memcpy( hist_data, hist->data, xbins*ybins*sizeof(int) );
-      } else { // symmetrize here
+      } else { // symmetrize here before sending
          for(k=0; k<ybins; k++){
-            for(i=0; i<=j; i++){
-               hist_data[i+k*xbins] = hist->data[i+k*xbins] +
-                                      hist->data[k+i*xbins];
+            for(i=0; i<=k; i++){
+              hist_data[i+k*xbins] = hist->data[i+k*xbins] + hist->data[k+i*xbins];
+            //  hist_data[k+i*xbins] = hist->data[i+k*xbins] + hist->data[k+i*xbins];
             }
          }
       }
@@ -2710,7 +3091,7 @@ int send_spectrum(int num, char url_args[][STRING_LEN], char *name, int fd)
       put_line(fd, tmp, strlen(tmp) );
       sprintf(tmp,"\"YaxisMax\" : %d,", hist->ymax );
       put_line(fd, tmp, strlen(tmp) );
-      sprintf(tmp,"\"symmetrized\" : %s,", 0 ? "false" : "true" );
+      sprintf(tmp,"\"symmetrized\" : %s,", hist->symm ? "true" : "false" );
       put_line(fd, tmp, strlen(tmp) );
       pos = 0;
       for(k=0; k<ybins; k+=16){
@@ -2718,9 +3099,9 @@ int send_spectrum(int num, char url_args[][STRING_LEN], char *name, int fd)
           count = 0; max=0;
           for(m=0; m<16; m++){
             for(l=0; l<16; l++){
-              if( hist->data[i+l + (k+m)*xbins]!=0){
+              if( hist_data[i+l + (k+m)*xbins]!=0){
                 ++count;
-                if( hist->data[i+l + (k+m)*xbins]>max){max = hist->data[i+l + (k+m)*xbins];}
+                if( hist_data[i+l + (k+m)*xbins]>max){max = hist_data[i+l + (k+m)*xbins];}
               }
             }
           }
@@ -2799,8 +3180,8 @@ int send_spectrum(int num, char url_args[][STRING_LEN], char *name, int fd)
               for(m=0; m<16; m++){
                 for(l=0; l<16; l++){
                   listIndex = floor((16*m+l)/64);
-                  if( hist->data[i+l + (k+m)*xbins]>list_max[listIndex]){
-                    list_max[listIndex] = hist->data[i+l + (k+m)*xbins];
+                  if( hist_data[i+l + (k+m)*xbins]>list_max[listIndex]){
+                    list_max[listIndex] = hist_data[i+l + (k+m)*xbins];
 
                     // Set the value size required for the largest number in each value string
                     if(list_max[listIndex]>0){ list_valueSize[listIndex] = 0; } // 6 bits
@@ -2824,7 +3205,7 @@ int send_spectrum(int num, char url_args[][STRING_LEN], char *name, int fd)
 
               // Loop through this submatrix and build the strings
               for(m=0; m<16; m++){
-                for(l=0; l<16; l++){val=hist->data[i+l+(k+m)*xbins];
+                for(l=0; l<16; l++){val=hist_data[i+l+(k+m)*xbins];
                   // List type (8 comma-separated strings which requires 16 quotes and 7 commas).
                   // All strings must be present (the quotes) but can have zero length.
                   // String of single-character coordinates for 0-63.
@@ -2865,6 +3246,7 @@ int send_spectrum(int num, char url_args[][STRING_LEN], char *name, int fd)
                   strcat(coordString, tmp );
 
                   // Add this value to the string
+                  listIndex = floor((16*m+l)/64);
                   valCount = list_valueSize[listIndex];
                   while(valCount>=0){
                     val1 = ((val & bitMask[valCount])>>bitShift[valCount]) + 64;
@@ -2892,7 +3274,7 @@ int send_spectrum(int num, char url_args[][STRING_LEN], char *name, int fd)
 
 
               for(m=0; m<16; m++){
-                for(l=0; l<16; l++){val=hist->data[i+l+(k+m)*xbins];
+                for(l=0; l<16; l++){val=hist_data[i+l+(k+m)*xbins];
               // Array type
               // Encode 0-63 values as a character using the ASCII code.
               // ASCII code 0-31 are non-printable control characters (not permitted in JSON strings).
@@ -2902,7 +3284,7 @@ int send_spectrum(int num, char url_args[][STRING_LEN], char *name, int fd)
               // Value of 92 will be made 92-32=60 instead of 92 to avoid the requirement for a preceeding character.
 
               // Add this value to the string
-              valCount = list_valueSize[0];
+              valCount = submatrix_type[pos]-5;
               while(valCount>=0){
                 val1 = ((val & bitMask[valCount])>>bitShift[valCount]) + 64;
                 if(val1 < 64 || val1 > 127){ fprintf(stdout,"Loop Array type %d: Illegal character ASCII code, %d\n",submatrix_type[pos],val1); }
@@ -2934,7 +3316,7 @@ int send_spectrum(int num, char url_args[][STRING_LEN], char *name, int fd)
     put_line(fd, tmp, strlen(tmp) ); // empty
   }
   put_line(fd, "]", 1);
-  free(hist->data); hist->data = NULL;
+  free(hist_data);
     }
     }
 }

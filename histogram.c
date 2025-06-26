@@ -88,8 +88,8 @@ TH1I *H1_BOOK(Config *cfg, char *name, char *title, int nbins, int xmin, int xma
 
    if( cfg == NULL ){ return(NULL); }
    if( cfg->nhistos >= MAX_HISTOGRAMS ){
-      fprintf(stderr,"H1_BOOK: max number of histograms:%d exceeded\n",
-	 MAX_HISTOGRAMS );
+      fprintf(stderr,"H1_BOOK: max number of histograms:%d exceeded when handling %s\n",
+	 MAX_HISTOGRAMS, name );
       return(NULL);
    }
    // always allocate the data for sorting histograms
@@ -174,9 +174,18 @@ TH2I *H2_BOOK(Config *cfg, char *name, char *title, int xbins, int xmin, int xma
 
    if( cfg == NULL ){return(NULL); }
    if( cfg->nhistos >= MAX_HISTOGRAMS ){
-      fprintf(stderr,"H2_BOOK: max number of histograms:%d exceeded\n",
-	 MAX_HISTOGRAMS );
+      fprintf(stderr,"H2_BOOK: max number of histograms:%d exceeded when handling %s\n",
+	 MAX_HISTOGRAMS, name );
       return(NULL);
+   }
+   if( ybins == 0 ){
+     // This matrix will be symmetrized. Set the flag and the ybins to equal xbins.
+     result->symm = 1; // Symmetric matrix
+     result->type = INT_2D_SYMM;
+     ybins = xbins;
+   }else{
+     result->symm = 0; // Non-symmetric matrix
+     result->type = INT_2D;
    }
    // always allocate the data for sorting histograms
    // skip allocation for large histos read from disk (only read when needed)
@@ -213,7 +222,6 @@ TH2I *H2_BOOK(Config *cfg, char *name, char *title, int xbins, int xmin, int xma
    result->SetBinContent = &TH2I_SetBinContent;
    result->GetBinContent = &TH2I_GetBinContent;
    result->SetValidLen   = &TH2I_SetValidLen;
-   result->type          = INT_2D;
    cfg->histo_list[cfg->nhistos++] = (void *)result;
    cfg->folders_valid = 0;
    return(result);
@@ -391,10 +399,9 @@ int write_histofile(Config *cfg, FILE *fp)
    for(i=0; i<cfg->nhistos; i++){
       if( ((TH1I *)cfg->histo_list[i])->suppress ){ continue; }
       switch( type = ((TH1I *)cfg->histo_list[i])->type ){
-	//case FLOAT_1D: write_th1f(fp, histogram_list[i] ); break;
       case INT32_1D: write_th1I(fp, cfg->histo_list[i] ); break;
       case INT32_2D: write_th1I(fp, cfg->histo_list[i] ); break;
-      //case INT16_1D: write_th1s(fp, histogram_list[i] ); break;
+      case INT32_2D_SYMM: write_th1I(fp, cfg->histo_list[i] ); break;
       }
    }
    return(0);
@@ -421,10 +428,10 @@ int compress_buffer(char *input, int size)
       fprintf(stderr,"zlib compression error\n"); return(-1);
    }
    strm.avail_in = size;
-   strm.next_in = input;
+   strm.next_in = (unsigned char *)input;
 
    strm.avail_out = COMPRESS_BUFSIZ; // should never be filled
-   strm.next_out = compress_buf;
+   strm.next_out = (unsigned char *)compress_buf;
    deflate(&strm, Z_FINISH);
    status = COMPRESS_BUFSIZ - strm.avail_out;
    deflateEnd(&strm);
@@ -443,10 +450,10 @@ int decompress_buffer(char *input, int size)
       fprintf(stderr,"zlib decompression error\n"); return(-1);
    }
    strm.avail_in = size;
-   strm.next_in = input;
+   strm.next_in = (unsigned char *)input;
 
    strm.avail_out = COMPRESS_BUFSIZ; // should never be filled
-   strm.next_out = compress_buf;
+   strm.next_out = (unsigned char *)compress_buf;
    inflate(&strm, Z_NO_FLUSH);
    status = COMPRESS_BUFSIZ - strm.avail_out;
    inflateEnd(&strm);
@@ -465,7 +472,7 @@ int read_histo_data(Histogram *histo, FILE *fp)
       return(-1);
    }
    if( fseek(fp, histo->file_data_offset, SEEK_SET) < 0 ){
-      fprintf(stderr,"failed_seek histo:%s[%d]\n", histo->title );
+      fprintf(stderr,"failed_seek histo:%s\n", histo->title );
       return(-1);
    }
    if( fread( &file_body, sizeof(char), size, fp) < size ){
@@ -521,7 +528,7 @@ Config *read_histofile(char *filename, int config_only)
                err=1; break;
             }
             file_offset += size+pad;
-            continue; 
+            continue;
          }
       }
       if( config_only ){ // config file was not the first entry
@@ -561,6 +568,7 @@ Config *read_histofile(char *filename, int config_only)
       if( ybins == 0 ){
          histo = (TH1I *)H1_BOOK(cfg, file_head.name,file_head.link,xbins,0,xbins);
       } else {
+        if(file_head.type[0] == 'C'){  ybins=0; } // set ybins to 0 for H2_BOOK to handle as symmetric
          histo = (TH1I *)H2_BOOK(cfg, file_head.name,file_head.link,xbins,0,xbins,ybins,0,ybins);
       }
       if( bins <= SMALL_HISTO_BINS ){
@@ -589,11 +597,17 @@ int write_th1I(FILE *fp, void *ptr)
    sprintf(file_head.prefix,"%s", hist->path);
    sprintf(file_head.mode    ,"0000755"); // encode type?
    sprintf(file_head.uid     ,"%07o", hist->xbins);
-   sprintf(file_head.gid     ,"%07o", (hist->type==INT_2D) ? hist->ybins : 0);
+   sprintf(file_head.gid     ,"%07o", (hist->type==INT_2D || hist->type==INT_2D_SYMM) ? hist->ybins : 0);
    //sprintf(file_head.size    ,"%011o", 0 ); // fill in proper size later
-   sprintf(file_head.mtime   ,"%011o", filetime );
+   sprintf(file_head.mtime   ,"%011lo", filetime );
    memset(file_head.cksum, ' ', 8);// cksum entry counted as 8 blanks, no null
-   file_head.type[0] = 0;          // only 1byte
+
+   switch( hist->type ){
+   case INT32_1D: file_head.type[0] = 'A'; break;
+   case INT32_2D: file_head.type[0] = 'B'; break;
+   case INT32_2D_SYMM: file_head.type[0] = 'C'; break;
+   }
+
    // linkname[100] is from 157 to 256
    //sprintf(file_head.magic   ,"Grif1"    ); // ustar
    sprintf(file_head.magic   ,"ustar"    ); // ustar FOLLOWED BY NULL
@@ -605,17 +619,17 @@ int write_th1I(FILE *fp, void *ptr)
 
    // binformat, #entries, compression format(use size for now)
 
-   bins = (hist->type==INT_2D) ? hist->xbins*hist->ybins : hist->xbins;
+   bins = (hist->type==INT_2D || hist->type==INT_2D_SYMM) ? hist->xbins*hist->ybins : hist->xbins;
    // check for empty (count non-zero at same time)
    count = 0; for(i=0; i<bins; i++){
       if( hist->data[i] != 0 ){
-         ++count; if( hist->type==INT_2D ){ break; }
+         ++count; if( hist->type==INT_2D || hist->type==INT_2D_SYMM){ break; }
       }
    }
    if( count == 0 ){ size=0; mode=0; }
    //else if( count * 6 < ptr->xbins*sizeof(float) ){ size = count*6; mode=1; }
    else if( bins > 65536 ){
-      size = compress_buffer(hist->data, bins*sizeof(int));
+      size = compress_buffer((char *)(hist->data), bins*sizeof(int));
       mode = 3; // gzip compressed
    } else { size = bins*sizeof(int);  mode=2; } // just write data
 
@@ -645,13 +659,19 @@ int write_th1I(FILE *fp, void *ptr)
 
 int sum_th1I(Config *dst_cfg, TH1I *dst, TH1I *src)
 {
-   int i, bins;
+   int i, bins, ybins;
    if( dst == NULL ){
       memcpy(dst_cfg->current_path, src->path, HISTO_FOLDER_LENGTH);
       if( src->type == INT_1D ){
          dst = H1_BOOK(dst_cfg, src->handle, src->title, src->xbins, src->xmin, src->xmax);
       } else {
-         dst = (TH1I *)H2_BOOK(dst_cfg, src->handle, src->title, src->xbins, src->xmin, src->xmax, src->ybins, src->ymin, src->ymax);
+        // Handle symmetrized and non-symmetrized matrices
+        if( src->symm == 1 ){
+          ybins = 0;
+        }else{
+          ybins = src->xbins;
+        }
+         dst = (TH1I *)H2_BOOK(dst_cfg, src->handle, src->title, src->xbins, src->xmin, src->xmax, ybins, src->ymin, src->ymax);
       }
       if( dst == NULL ){ return(-1); }
       if( dst->data == NULL ){
@@ -871,7 +891,7 @@ char *next_histotree_item(Config *cfg, int reset, int *type, int *ascend)
          *type = 2; return(NULL);  // all done (curr_depth = 0)
       }
    }
-   if( histo->type == INT_2D ){
+   if( histo->type == INT_2D  || histo->type==INT_2D_SYMM){
       sprintf(name, "%s:2d", histo->title );
    } else {
       sprintf(name, "%s", histo->title );
@@ -892,7 +912,8 @@ char *next_histotree_item(Config *cfg, int reset, int *type, int *ascend)
 int dump_histo_tree(Folder *folder)
 {
    while( 1 ){
-      printf("\"%s\"\n", (folder->name == NULL) ? "NULL" : folder->name);
+      //printf("\"%s\"\n", (folder->name == NULL) ? "NULL" : folder->name); // warning: comparison of array 'folder->name' equal to a null pointer is always false
+      printf("\"%s\"\n", folder->name);
       if( folder->next_subfolder != NULL ){
  	 printf(" / \n");
          dump_histo_tree(folder->next_subfolder);

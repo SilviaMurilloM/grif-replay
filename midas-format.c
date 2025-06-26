@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h> // abort()
 #include <time.h>
 #include <string.h>
 #include <unistd.h>
@@ -90,6 +91,26 @@ static int caen_event_id;
 //    0x000000df 0x00280019 0x00078b89 0x000000dd
 //    0x00a500b3 0x0008c690 0x0000032f 0x002e002e
 
+
+// assign caen board_id to grifc mapping in order of channel definition in odb
+int board_to_grifc[32];   // board-id is 5bits -> 32 values
+int grifc_to_boardid[16]; // to allow translating back to original address
+int read_caen_odb_addresses(int odb_daqsize, unsigned short *addr_table)
+{
+   int i, addr, board_id, curr_grifc=8;
+   memset(board_to_grifc, -1, 32*sizeof(int));
+   for(i=0; i<MAX_DAQSIZE && i<odb_daqsize; i++){
+      if( ((addr = addr_table[i]) & 0x8000 ) == 0 ){ continue; }
+      board_id = (addr - 0x8000) >> 8;
+      if( board_to_grifc[board_id] != -1 ){ continue; }
+      board_to_grifc[board_id] = curr_grifc;
+      grifc_to_boardid[curr_grifc++] = board_id;
+      if( curr_grifc >= 16 ){
+         printf("midas-format.c:read_caen_odb_addresses - more than 8 caen board id's - can't sort this data\n"); abort();
+      }
+   }
+   return(0);
+}
 int translate_caen_bank(unsigned *ptr, int len)
 {
    int i, j, k, m, outpos, tmp_outpos, out_start, addr, msb, board_id;
@@ -123,7 +144,9 @@ int translate_caen_bank(unsigned *ptr, int len)
          out_start = outpos;
             msb       = ptr[i  ] >> 31; // msb set => odd-channel
             timestamp = ptr[i++] & 0x7FFFFFFF;
-            addr = (0x8000 + (board_id * 0x100) + 2*chan_pair + msb);
+	  //addr = (0x8000 + (board_id * 0x100) + 2*chan_pair + msb);
+            addr = (0x0000 + (board_to_grifc[board_id] * 0x1000) +
+		                               2*chan_pair + msb);
 
    /* 0 */  tmp_bankbuf[outpos++] = (0x8<<28) + ((CAEN_ID)<<25) +
                ((CAEN_WORDS)<<20) + (addr<<4) + (DESCANT_DTYPE);
@@ -221,7 +244,7 @@ int copy_bank(unsigned *ptr, int size)
          memcpy((char *)(bankbuf+wrpos), ptr, 4*size);
       } else { // write at end and wrap to start of bankbuf
          memcpy((char *)(bankbuf+wrpos), ptr,  4*words_to_end);
-         memcpy((char *)(bankbuf),       ptr + 4*words_to_end,
+         memcpy((char *)(bankbuf),       ptr + words_to_end,
                                                     4*(size - words_to_end));
       }
       bankbuf_wrpos += size; return(0);

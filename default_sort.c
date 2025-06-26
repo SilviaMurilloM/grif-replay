@@ -26,10 +26,14 @@ static int   dtype_table[MAX_DAQSIZE]; int    *dtypes = dtype_table;
 static float  gain_table[MAX_DAQSIZE]; float   *gains = gain_table;
 static float  offs_table[MAX_DAQSIZE]; float *offsets = offs_table;
 static float  quad_table[MAX_DAQSIZE]; float   *quads = quad_table;
+float  pileupk1[MAX_DAQSIZE][7];
+float  pileupk2[MAX_DAQSIZE][7];
+float  pileupE1[MAX_DAQSIZE][7];
 static short *chan_address = addr_table;
 extern Grif_event grif_event[MAX_COINC_EVENTS];
 
 // Default sort function declarations
+extern int init_time_diff_gates(Config *cfg);
 extern int init_chan_histos(Config *cfg);
 extern int init_singles_histos(Config *cfg);
 extern int init_coinc_histos(Config *cfg);
@@ -42,24 +46,44 @@ int init_default_histos(Config *cfg, Sort_status *arg)
 {
    Cal_coeff *cal;
    int i, j;
+
+   // Initialize all pileup parameters to unset values
+   for(i=0; i<odb_daqsize; i++){
+     for(j=0; j<7; j++){
+       pileupk1[i][j] = pileupk2[i][j] = pileupE1[i][j] = -1;
+     }
+   }
+
    cfg->odb_daqsize = odb_daqsize;
    for(i=0; i<odb_daqsize; i++){ // update config with odb info
-      edit_calibration(cfg, chan_name[i], offsets[i], gains[i], quads[i],
-                       chan_address[i],  dtype_table[i], arg->cal_overwrite );
-   }
-   // ALSO need to transfer config info to the arrays that are used in sort
-   if( arg->cal_overwrite == 0 ){ // overwrite = 0 => USE CONFIG NOT ODB
-      for(i=0; i<odb_daqsize; i++){
-         cal = cfg->calib[i];
-         if( strcmp(chan_name[i], cal->name) != 0 ){ // conf not in odb order
-            for(j=0; j<cfg->ncal; j++){ cal = cfg->calib[j];
-               if( strcmp(chan_name[i], cal->name) == 0 ){ break; }
-            }
-            if( j == cfg->ncal ){ continue; } // not found in config
+     edit_calibration(cfg, chan_name[i], offsets[i], gains[i], quads[i], pileupk1[i], pileupk2[i], pileupE1[i],
+       chan_address[i],  dtype_table[i], arg->cal_overwrite );
+     }
+     // ALSO need to transfer config info to the arrays that are used in sort
+     for(i=0; i<odb_daqsize; i++){
+
+       cal = cfg->calib[i];
+       if( strcmp(chan_name[i], cal->name) != 0 ){ // conf not in odb order
+         for(j=0; j<cfg->ncal; j++){ cal = cfg->calib[j];
+           if( strcmp(chan_name[i], cal->name) == 0 ){ break; }
          }
+         if( j == cfg->ncal ){ continue; } // not found in config
+       }
+
+       // overwrite = 0 => USE CONFIG NOT ODB for offset, gain, quads
+       if( arg->cal_overwrite == 0 ){
          offsets[i]=cal->offset; gains[i]=cal->gain;  quads[i]=cal->quad;
-      }
-   }
+       }
+
+       // Pileup parameters do not exist in the MIDAS ODB so must always be copied from the config
+       for(j=0; j<7; j++){
+         pileupk1[i][j] = (isnan(cal->pileupk1[j])) ? 0.0 : cal->pileupk1[j];
+         pileupk2[i][j] = (isnan(cal->pileupk2[j])) ? 0.0 : cal->pileupk2[j];
+         pileupE1[i][j] = (isnan(cal->pileupE1[j])) ? 0.0 : cal->pileupE1[j];
+       }
+     }
+
+   init_time_diff_gates(cfg);
    init_chan_histos(cfg);
    init_singles_histos(cfg);
    init_coinc_histos(cfg);
@@ -74,26 +98,58 @@ int init_default_histos(Config *cfg, Sort_status *arg)
 float spread(int val){ return( val + rand()/(1.0*RAND_MAX) ); }
 int GetIDfromAddress(unsigned short addr){ // address must be an unsigned short
   return(address_chan[addr]);
-  /*
-// These checks are very slow. I have never seen any of these errors reported
- int chan=-1;
-  if(addr<0){ // Comparison of "|| addr>MAX_ADDRESS" is not needed because always false (unsigned short)addr < constant 65536
-    fprintf(stderr,"Invalid address [%04X,%d] requested during unpacking\n",addr,addr);
-    return(-1);
+}
+
+int init_time_diff_gates(Config *cfg){
+  int i,j,k;
+  Global *global;
+  char tmp[32];
+
+  // Initialize all time differences between subsystems to be the default 250ns
+  for(i=0; i<MAX_SUBSYS; i++){
+    for(j=0; j<MAX_SUBSYS; j++){
+      time_diff_gate_min[i][j] = 0;  // default is 0 nanoseconds
+      time_diff_gate_max[i][j] = 25; // default is 250 nanoseconds
+    }
   }
-  chan = address_chan[addr];
-  if( chan<0 || chan>odb_daqsize ){
-      fprintf(stderr,"Invalid channel number [%d] found for address [%04X,%d] requested during unpacking\n",chan,addr,addr);
-      return(-1);
-  }else{
-    return( chan );
+
+  // Search the globals for time difference settings and overwrite their values
+  for(i=0; i<cfg->nglobal; i++){
+    global = cfg->globals[i];
+    sprintf(tmp,"%s",global->name);
+    if(strncmp(tmp,"time_diff_",10) == 0){
+      //fprintf(stdout,"Process %s\n",global->name);
+      // This global is a time difference value
+      // Identify the subsystem types and then save the value in the correct place
+      for(j=0; j<MAX_SUBSYS; j++){
+        if(strlen(subsys_handle[j])<2){ continue; }
+        if(strstr(tmp,subsys_handle[j]) > 0){
+          // Identiy the second subsystem type
+          //  fprintf(stdout,"Found %s in %s\n",subsys_handle[j],global->name);
+          for(k=0; k<MAX_SUBSYS; k++){
+            if(strlen(subsys_handle[k])<2){ continue; }
+            if(strstr(tmp,subsys_handle[k]) > 0 && (strstr(tmp,subsys_handle[k]) != strstr(tmp,subsys_handle[j]))){
+              // save the value in the correct place
+              fprintf(stdout,"time_diff_%s_%s set to %d,%d\n",subsys_handle[j],subsys_handle[k],global->min,global->max);
+              time_diff_gate_min[j][k] = global->min;
+              time_diff_gate_max[j][k] = global->max;
+              time_diff_gate_min[k][j] = global->min;
+              time_diff_gate_max[k][j] = global->max;
+            }
+          }
+        }
+      }
+    }
   }
-  */
+
+  return(0);
 }
 
 int apply_gains(Grif_event *ptr)
 {
-  int tac_ts_offset[8] = {50,58,405,73,73,404,110,154};
+  //int tac_ts_offset[8] = {50,58,405,73,73,404,110,154};
+  int tac_ts_offset[12] = {60,60,60,60,60,60,60,60,60,60,60,60}; // From Dec 2024
+  //int tac_ts_offset[8] = {134,48,74,59,48,400,395,0}; // Rashmi S1723
   int caen_ts_offset = -60; // this value (-60) aligns the timestamps of HPGe with ZDS(CAEN)
    float energy,psd;
    int chan;
@@ -108,8 +164,23 @@ int apply_gains(Grif_event *ptr)
       return(-1);
    }
 
+   // Calculate the energy and calibrated energies
    ptr->energy = energy = ( ptr->integ == 0 ) ? ptr->q : spread(ptr->q)/ptr->integ;
    ptr->ecal=ptr->esum = offsets[chan]+energy*(gains[chan]+energy*quads[chan]);
+
+      // NOBODY CURRENTLY USES e2,e3,e4 ...
+      if( ptr->integ2 != 0 ){
+         energy = ptr->energy2 = spread(ptr->q2)/ptr->integ2;
+         ptr->e2cal = offsets[chan]+energy*(gains[chan]+energy*quads[chan]);
+      }
+      if( ptr->integ3 != 0 ){
+         energy = ptr->energy3 = spread(ptr->q3)/ptr->integ3;
+         ptr->e3cal = offsets[chan]+energy*(gains[chan]+energy*quads[chan]);
+      }
+      if( ptr->integ4 != 0 ){
+         energy = ptr->energy4 = spread(ptr->q4)/ptr->integ4;
+         ptr->e4cal = offsets[chan]+energy*(gains[chan]+energy*quads[chan]);
+      }
 
    // Assign the Sub System index based on dtype
    // The dtype to subsys mapping was determined from the PSC table in the function gen_derived_odb_tables()
@@ -131,12 +202,19 @@ int apply_gains(Grif_event *ptr)
       }
    } else { ptr->subsys = MAX_SUBSYS-1; }
 
-   if( ptr->address == 11016 && ptr->cfd == 648641 ){
-     printf("mark this event\n");
-   }
-
    // fprintf(stdout,"apply_gains %s chan%d: %d/%d=%d",subsys_handle[ptr->subsys],chan,ptr->q,ptr->integ,ptr->energy);
    // fprintf(stdout,", [%f,%f,%f] -> %d\n",quads[chan],gains[chan],offsets[chan],ptr->ecal);
+
+
+   // HPGe pileup development
+   if( ptr->subsys == SUBSYS_HPGE){
+     ptr->psd = 14; // Pileup class - default value of 12 for all HPGe events
+     if(ptr->pileup==1 && ptr->nhit ==1){
+       // Single hit events
+       // no pileup, this is the most common type of HPGe event
+       ptr->psd = 1; // Pileup class, default for single hit events
+     }
+   }
 
    // The TAC module produces its output signal around 2 microseconds later
    // than the start and stop detector signals are processed.
@@ -154,19 +232,6 @@ int apply_gains(Grif_event *ptr)
    }
 
 
-   // NOBODY CURRENTLY USES e2,e3,e4 ...
-   //if( ptr->integ2 != 0 ){
-   //   energy = ptr->energy2 = spread(ptr->q2)/ptr->integ2;
-   //   ptr->e2cal = offsets[chan]+energy*(gains[chan]+energy*quads[chan]);
-   //}
-   //if( ptr->integ3 != 0 ){
-   //   energy = ptr->energy3 = spread(ptr->q3)/ptr->integ3;
-   //   ptr->e3cal = offsets[chan]+energy*(gains[chan]+energy*quads[chan]);
-   //}
-   //if( ptr->integ4 != 0 ){
-   //   energy = ptr->energy4 = spread(ptr->q4)/ptr->integ4;
-   //   ptr->e4cal = offsets[chan]+energy*(gains[chan]+energy*quads[chan]);
-   //}
    return(0);
 }
 
@@ -200,13 +265,18 @@ int default_sort(int win_idx, int frag_idx, int flag)
 //  also calculate multiplicities[store in frag_idx only]
 int pre_sort(int frag_idx, int end_idx)
 {
-  Grif_event *alt, *ptr = &grif_event[frag_idx];
+  Grif_event *alt2, *alt, *ptr = &grif_event[frag_idx];
   int bgo_window = 20, addback_window = 20;
   int rcmp_fb_window = 10;
+  int lbl_tac_window = 25;
   int art_tac_window = 25;
   int desw_beta_window = 80;
   float desw_median_distance = 1681.8328; // descant wall median source-to-detector distance in mm
-  int i, dt, tof;
+  int i, j, dt, dt13, tof;
+  float q1,q2,q12,k1,k2,k12,e1,e2,e12,m,c;
+  int chan,found,pos;
+  float energy,correction;
+  float correction12, correction23;
 
       // Protect yourself
   if( ptr->chan<0 || ptr->chan >= odb_daqsize ){
@@ -240,6 +310,225 @@ int pre_sort(int frag_idx, int end_idx)
     // SubSystem-specific pre-processing
     switch(ptr->subsys){
       case SUBSYS_HPGE:
+
+      // HPGe pile-up corrections
+      // THE PRE_SORT WINDOW SHOULD BE EXTENDED TO COVER THE FULL POSSIBLE TIME DIFFERENCE BETWEEN PILE-UP events
+      // THIS IS EQUAL TO THE DIFF PERIOD OF HPGE TYPE
+      if(alt->subsys == SUBSYS_HPGE && alt->chan == ptr->chan){
+        if(ptr->pileup==1 && ptr->nhit ==1){
+          // no pileup, this is the most common type of HPGe event
+          ptr->psd = 1; // Pileup class
+        }else if(ptr->pileup==0){
+          // pileup error
+          ptr->psd = 0; // Pileup class, error
+        }else if((ptr->pileup==1 && ptr->nhit==2) && (alt->pileup==2 && alt->nhit==1)){
+          ptr->psd = alt->psd = 9; // Pileup class, error for 2Hits
+          ptr->ts_int = alt->ts_int = dt;
+          if(ptr->q>0 && ptr->integ>0 && ptr->q2>0 && ptr->integ2>0 && alt->q>0 && alt->integ>0){
+            // 2 Hit, Type A
+            // Two-Hit pileup case ...
+            //
+            //      |    |   K1   | /|      K12      |\
+            //      |    *________|/_|_______________| \
+            //      |   /                             \ \ |    K2   |   .
+            //      |  /                               \ \|_________|   .
+            //      | /                                 \            \  .
+            //    __*/                                   \_____       \___
+            //
+            //
+
+            // The (ptr) fragement is the first Hit of a two Hit pile-up event.
+            // It is identified as having (ptr->pileup==1 && ptr->nhit==2)
+
+            // Assign the pileup class numbers to the two hits and calculate the time difference between them
+            ptr->psd = 3; // Pileup class, 1st of 2Hits
+            alt->psd = 4; // Pileup class, 2nd of 2Hits
+            ptr->ts_int = alt->ts_int = dt;
+
+
+            // Apply the k1 dependant correction to the energy of the first hit
+            chan  = ptr->chan; // chan for ptr and alt are the same
+            pos  = crystal_table[ptr->chan];
+              k1 = ptr->integ;
+              ptr->ecal=ptr->esum = ptr->ecal*( pileupk1[chan][0]+(k1*pileupk1[chan][1])+(k1*k1*pileupk1[chan][2])+(k1*k1*k1*pileupk1[chan][3])
+              +(k1*k1*k1*k1*pileupk1[chan][4])+(k1*k1*k1*k1*k1*pileupk1[chan][5])+(k1*k1*k1*k1*k1*k1*pileupk1[chan][6]));
+              alt->e4cal=ptr->ecal; // Remember the ecal of the first Hit in this second Hit
+
+              // Apply the E1 and k2 dependant offset correction to the energy of the second hit
+              // Apply the k2 dependant correction to the energy of the second hit
+              k2 = alt->integ;
+              correction = ptr->ecal*( pileupE1[chan][0]+(k2*pileupE1[chan][1])+(k2*k2*pileupE1[chan][2])+(k2*k2*k2*pileupE1[chan][3])
+              +(k2*k2*k2*k2*pileupE1[chan][4])+(k2*k2*k2*k2*k2*pileupE1[chan][5])+(k2*k2*k2*k2*k2*k2*pileupE1[chan][6]));
+              alt->ecal=alt->esum = (alt->ecal*( pileupk2[chan][0]+(k2*pileupk2[chan][1])+(k2*k2*pileupk2[chan][2])+(k2*k2*k2*pileupk2[chan][3])
+              +(k2*k2*k2*k2*pileupk2[chan][4])+(k2*k2*k2*k2*k2*pileupk2[chan][5])+(k2*k2*k2*k2*k2*k2*pileupk2[chan][6])))+correction;
+
+          }else{
+            // 2Hit error events - q12 is zero
+            // 2 Hit, Type B
+
+            // Assign the pileup class numbers to the two hits and calculate the time difference between them
+            ptr->psd = 7; // Pileup class, 1st of 2Hits where Hits treated separately with no correction
+            alt->psd = 8; // Pileup class, 2nd of 2Hits where Hits treated separately with no correction
+            ptr->ts_int = alt->ts_int = dt;
+
+            // Apply the k1 dependant correction to the energy of the first hit
+            pos  = crystal_table[ptr->chan];
+            k1 = ptr->integ;
+            ptr->ecal=ptr->esum = ptr->ecal*( pileupk1[chan][0]+(k1*pileupk1[chan][1])+(k1*k1*pileupk1[chan][2])+(k1*k1*k1*pileupk1[chan][3])
+            +(k1*k1*k1*k1*pileupk1[chan][4])+(k1*k1*k1*k1*k1*pileupk1[chan][5])+(k1*k1*k1*k1*k1*k1*pileupk1[chan][6]));
+            alt->e4cal=ptr->ecal; // Remember the ecal of the first Hit in this second Hit
+
+            // Apply the k2 dependant correction to the energy of the second hit
+            k2 = alt->integ;
+            correction = ptr->ecal*( pileupE1[chan][0]+(k2*pileupE1[chan][1])+(k2*k2*pileupE1[chan][2])+(k2*k2*k2*pileupE1[chan][3])
+            +(k2*k2*k2*k2*pileupE1[chan][4])+(k2*k2*k2*k2*k2*pileupE1[chan][5])+(k2*k2*k2*k2*k2*k2*pileupE1[chan][6]));
+            alt->ecal=alt->esum = (alt->ecal*( pileupk2[chan][0]+(k2*pileupk2[chan][1])+(k2*k2*pileupk2[chan][2])+(k2*k2*k2*pileupk2[chan][3])
+            +(k2*k2*k2*k2*pileupk2[chan][4])+(k2*k2*k2*k2*k2*pileupk2[chan][5])+(k2*k2*k2*k2*k2*k2*pileupk2[chan][6])))+correction;
+
+          }
+        }else if((ptr->pileup==1 && ptr->nhit==2) && (alt->pileup==1 && alt->nhit==1)){
+          // 2 Hit, Type C
+          // 2Hit pileup where 2nd Hit integration region starts after 1st Hit integration ends
+          // k12<0, q12 is zero
+          // -> Treat as separate hits
+          // Correct second Hit for effect of first based on time between hits
+
+          // Assign the pileup class numbers to the two hits and calculate the time difference between them
+          ptr->psd = 5; // Pileup class, 1st of 2Hits where Hits treated separately with no correction
+          alt->psd = 6; // Pileup class, 2nd of 2Hits where Hits treated separately with no correction
+          ptr->ts_int = alt->ts_int = dt;
+
+          // Apply the k1 dependant correction to the energy of the first hit
+          pos  = crystal_table[ptr->chan];
+          k1 = ptr->integ;
+          ptr->ecal=ptr->esum = ptr->ecal*( pileupk1[chan][0]+(k1*pileupk1[chan][1])+(k1*k1*pileupk1[chan][2])+(k1*k1*k1*pileupk1[chan][3])
+          +(k1*k1*k1*k1*pileupk1[chan][4])+(k1*k1*k1*k1*k1*pileupk1[chan][5])+(k1*k1*k1*k1*k1*k1*pileupk1[chan][6]));
+          alt->e4cal=ptr->ecal; // Remember the ecal of the first Hit in this second Hit
+
+          // Apply the k2 dependant correction to the energy of the second hit
+          k2 = alt->integ;
+          correction = ptr->ecal*( pileupE1[chan][0]+(k2*pileupE1[chan][1])+(k2*k2*pileupE1[chan][2])+(k2*k2*k2*pileupE1[chan][3])
+          +(k2*k2*k2*k2*pileupE1[chan][4])+(k2*k2*k2*k2*k2*pileupE1[chan][5])+(k2*k2*k2*k2*k2*k2*pileupE1[chan][6]));
+          alt->ecal=alt->esum = (alt->ecal*( pileupk2[chan][0]+(k2*pileupk2[chan][1])+(k2*k2*pileupk2[chan][2])+(k2*k2*k2*pileupk2[chan][3])
+          +(k2*k2*k2*k2*pileupk2[chan][4])+(k2*k2*k2*k2*k2*pileupk2[chan][5])+(k2*k2*k2*k2*k2*k2*pileupk2[chan][6])))+correction;
+
+}else if((ptr->pileup==1 && ptr->nhit==3) && (alt->pileup==2 && alt->nhit==2)){ // 3Hit pileup
+      ptr->psd = alt->psd = 13; // Pileup class, error for 3Hits
+      if(ptr->q>0 && ptr->integ>0 && ptr->q2>0 && ptr->integ2>0 && alt->q>1 && alt->integ>0 && alt->q2>0 && alt->integ2>0){
+/*
+        found=0;
+        //  if(ptr->ecal > 1160 && ptr->ecal < 1180 && alt->ecal > 1325 && alt->ecal < 1350){
+        fprintf(stdout,"Found a pileup 3 hit group for chan %d with dt %d\n",ptr->chan,dt);
+        fprintf(stdout,"ptr: %ld %d, PU=%d, nhits=%d, q: %d %d %d %d, k: %d %d %d %d, ecal: %d %d %d %d, %lf %lf %lf\n",ptr->ts,ptr->cfd,ptr->pileup,ptr->nhit,ptr->q,ptr->q2,ptr->q3,ptr->q4,ptr->integ,ptr->integ2,ptr->integ3,ptr->integ4,ptr->ecal,ptr->e2cal,ptr->e3cal,ptr->e4cal,offsets[ptr->chan],gains[ptr->chan],quads[ptr->chan]);
+        fprintf(stdout,"alt: %ld %d, PU=%d, nhits=%d, q: %d %d %d %d, k: %d %d %d %d, ecal: %d %d %d %d, %lf %lf %lf\n",alt->ts,alt->cfd,alt->pileup,alt->nhit,alt->q,alt->q2,alt->q3,alt->q4,alt->integ,alt->integ2,alt->integ3,alt->integ4,alt->ecal,alt->e2cal,alt->e3cal,alt->e4cal,offsets[alt->chan],gains[alt->chan],quads[alt->chan]);
+        fprintf(stdout,"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",ptr->q,ptr->q2,alt->q,ptr->integ,ptr->integ2,alt->integ,ptr->energy,ptr->energy2,alt->energy,ptr->ecal,ptr->e2cal,alt->ecal);
+        found=1;
+        //    }
+*/
+        j=i+1;
+        while( j != end_idx ){ // need to find the third events in window associated with this channel
+          if( ++j >=  MAX_COINC_EVENTS ){ break; } alt2 = &grif_event[j]; // WRAP
+
+          if(alt2->chan == ptr->chan){ // It must also be a HPGe if the channel number is the same
+/*
+            fprintf(stdout,"alt2: %ld %d, PU=%d, nhits=%d, q: %d %d %d %d, k: %d %d %d %d, ecal: %d %d %d %d, %lf %lf %lf\n",alt2->ts,alt2->cfd,alt2->pileup,alt2->nhit,alt2->q,alt2->q2,alt2->q3,alt2->q4,alt2->integ,alt2->integ2,alt2->integ3,alt2->integ4,alt2->ecal,alt2->e2cal,alt2->e3cal,alt2->e4cal,offsets[alt2->chan],gains[alt2->chan],quads[alt2->chan]);
+*/
+            if(alt2->pileup==3 && alt2->nhit==1){
+              alt2->psd = 12; // Pileup class
+              if(alt2->q>1 && alt2->integ>0){
+
+                // Determine absolute time difference between timestamps for Hit 1 and 3
+                dt13 = ptr->ts - alt2->ts; if( dt13 < 0 ){ dt13 = -1*dt13; }
+
+
+                // Three-Hit pile-up case...
+                // there are two types depending on the relative timing of the third Hit...
+                // Triple pileup case A ... in which the 3rd pulse occurs more than L samples after the first
+                //                          there are 5 regions, 3 of which are not piled up (1 per pulse)
+                //                      ____                ____
+                //    |   |        |  /|    |\  |      |  /|    |\  |      |          :
+                //    |   |        | / |    | \ |      | / |    | \ |      |          :
+                //    |   *________|/__|____|  \|______|/__|____|  \|______|          :
+                //    |  /                   \                  \          \          :
+                //    | /   K1           K12  \    K2        K23 \     K3   \         :
+                //  __*/                       \_____             \______    \________:
+                //    0            S                   X
+                //
+                // ------------------------------------------------------------------------------------------
+                // Triple pileup case B ... in which the 3rd pulse occurs less than L samples after the first
+                //                          again 5 regions, only 2 of which are not piled up (first and last pulse)
+                //                          There is no region to obtain the height of pulse 2
+                //                          so the event contains K12, the sum of pulse 1+2, in place of pulseheight2
+                //                                    ________
+                //    |   |        |   |         |  /|        |\  |      |   |      |   :
+                //    |   |        |   |         | / |        | \ |      |   |      |   :
+                //    |   |        |   |_________|/__|________|  \|______|   |      |   :
+                //    |   |        |  /|          :           |\  |      |\  |      |   :
+                //    |   |        | / |          :           | \ |      | \ |      |   :
+                //    |   *________|/__|__________:___________|  \|______|__\|______|   :
+                //    |  /                        :           \                     \   :
+                //    | /     K1            K12   :    K123    \     K23        K3   \  :
+                //  __*/                          :             \_____                \_:
+                //    0            S              X           L
+                //
+
+                // The Differencitation period of the HPGe Pulse Height evaluation is L = 5000ns.
+                if(dt13>500){
+                  // Triple pileup case A ... in which the 3rd pulse occurs more than L samples after the first
+                  //                          there are 5 regions, 3 of which are not piled up (1 per pulse)
+                  correction23 = (alt->q/alt->integ)-((alt->q2/alt->integ2)-(alt2->q/alt2->integ));
+                  correction12 = (ptr->q/ptr->integ)-((ptr->q2/ptr->integ2)-(alt->q/alt->integ)-correction23);
+                  // Hit 1
+                  ptr->psd = 10; // Pileup class
+                  ptr->energy = energy = (spread(ptr->q)/ptr->integ) + correction12;
+                  ptr->ecal=ptr->esum = offsets[ptr->chan]+energy*(gains[ptr->chan]+energy*quads[ptr->chan]);
+                  // Hit 2
+                  alt->ts_int = dt;
+                  alt->psd = 11; // Pileup class
+                  alt->energy = energy = (spread(alt->q)/alt->integ) - correction12 + correction23;
+                  alt->ecal=alt->esum = offsets[alt->chan]+energy*(gains[alt->chan]+energy*quads[alt->chan]);
+                  // Hit 3
+                  alt2->ts_int = dt13;
+                  alt2->psd = 12; // Pileup class
+                  alt2->energy = energy = (spread(alt2->q)/alt2->integ) - correction23;
+                  alt2->ecal=alt2->esum = offsets[alt2->chan]+energy*(gains[alt2->chan]+energy*quads[alt2->chan]);
+                }else{
+                  // Triple pileup case B ... in which the 3rd pulse occurs less than L samples after the first
+                  //                          again 5 regions, only 2 of which are not piled up (first and last pulse)
+                  //                          There is no region to obtain the height of pulse 2
+                  //                          so the event contains K12, the sum of pulse 1+2, in place of pulseheight2
+                  correction23 = (alt->q/alt->integ)-((alt->q2/alt->integ2)-(alt2->q/alt2->integ));
+                  correction12 = (ptr->q/ptr->integ)-((ptr->q2/ptr->integ2)-(alt->q/alt->integ)-correction23);
+                  // Hit 1
+                  ptr->psd = 10; // Pileup class
+                  ptr->energy = energy = (spread(ptr->q)/ptr->integ) + correction12;
+                  ptr->ecal=ptr->esum = offsets[ptr->chan]+ptr->energy*(gains[ptr->chan]+ptr->energy*quads[ptr->chan]);
+                  // Hit 2
+                  alt->ts_int = dt;
+                  alt->psd = 11; // Pileup class
+                  alt->energy = energy = (spread(alt->q)/alt->integ) - correction12 + correction23;
+                  alt->ecal=alt->esum = offsets[alt->chan]+energy*(gains[alt->chan]+energy*quads[alt->chan]);
+                  // Hit 3
+                  alt2->ts_int = dt13;
+                  alt2->psd = 12; // Pileup class
+                  alt2->energy = energy = (spread(alt2->q)/alt2->integ) - correction23;
+                  alt2->ecal=alt2->esum = offsets[alt2->chan]+energy*(gains[alt2->chan]+energy*quads[alt2->chan]);
+                }
+/*
+                fprintf(stdout,"Complete 3Hit PU event, dt13=%d: %d,%d,%d,%d,%d, %d,%d,%d,%d,%d, %d,%d,%d,%d,%d, %d,%d,%d,%d,%d\n\n",dt13,ptr->q,ptr->q2,alt->q,alt->q2,alt2->q,ptr->integ,ptr->integ2,alt->integ,alt->integ2,alt2->integ,ptr->energy,ptr->energy2,alt->energy,alt->energy2,alt2->energy,ptr->ecal,ptr->e2cal,alt->ecal,alt->e2cal,alt2->ecal);
+*/
+                break; // Break the while if we found the third Hit
+              }
+            }
+          }
+        } // end of while for triple coincidence
+
+    //    fprintf(stdout,"\n");
+      }
+    }
+  }
+
+      // BGO suppression of HPGe
       if( dt < bgo_window && alt->subsys == SUBSYS_BGO && !ptr->suppress ){
         // could alternatively use crystal numbers rather than clover#
         //    (don't currently have this for BGO)
@@ -278,6 +567,19 @@ int pre_sort(int frag_idx, int end_idx)
       // So later in the main coincidence loop we only need to examine LBL and TAC.
       if(dt < art_tac_window && alt->subsys == SUBSYS_ARIES && crystal_table[ptr->chan] == 8){
       ptr->ab_alt_chan = alt->chan; ptr->e4cal = alt->ecal;
+      }
+      // For TAC01-07 we have a LBL-LBL coincidence
+      // Here save the LBL Id number and the LBL energy in the TAC event
+      // Save LBL channel number into ptr->q2 or q3 or q4
+      // Save LBL energy ecal into TAC ptr-ecal2 or ecal3 or ecal4
+      if(dt < lbl_tac_window && alt->subsys == SUBSYS_LABR_L && crystal_table[ptr->chan] < 8){
+        if(ptr->e2cal<1){
+          ptr->q2 = alt->chan; ptr->e2cal = alt->ecal;
+        }else if(ptr->e3cal<1){
+          ptr->q3 = alt->chan; ptr->e3cal = alt->ecal;
+        }else{
+          ptr->q4 = alt->chan; ptr->e4cal = alt->ecal; // If this is set then we have LBL multiplicity >2 for this TAC
+        }
       }
       break;
       case SUBSYS_ZDS:
@@ -331,7 +633,49 @@ int pre_sort(int frag_idx, int end_idx)
 int init_chan_histos(Config *cfg)
 {                      // 1d histograms for Q,E,T,Wf for each channel in odb
    char title[STRING_LEN], handle[STRING_LEN];
-   int i, j, pos;
+   int i, j, k, pos;
+   int test_matrix_data[32][32] = {
+     {2008,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,  3,0,0,3, 3,0,3,3, 3,3,0,3, 3,0,0,3},
+     {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,  3,0,0,3, 3,0,3,3, 3,3,0,3, 3,0,0,3},
+     {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,  3,0,0,3, 3,0,3,3, 3,3,0,3, 3,0,0,3},
+     {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,  3,3,3,3, 3,3,3,3, 3,3,3,3, 3,3,3,3},
+
+     {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,  3,3,3,3, 3,3,3,3, 3,3,3,3, 3,3,3,3},
+     {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,  3,0,0,3, 3,0,0,3, 3,0,0,3, 3,0,0,3},
+     {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,  3,0,0,3, 3,0,0,3, 3,0,0,3, 3,0,0,3},
+     {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,2008,  3,0,0,3, 3,0,0,3, 3,0,0,3, 3,0,0,3},
+
+     {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,  0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+     {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,  0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+     {0,0,8,0, 0,0,0,8, 0,0,0,0, 8,8,0,0,  0,0,8,0, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+     {0,8,2008,8, 0,0,8,0, 8,0,0,8, 0,0,0,0,  0,8,8,8, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+
+     {0,0,8,0, 0,0,8,8, 8,0,0,8, 8,0,0,0,  0,0,8,0, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+     {0,0,8,0, 0,0,8,0, 0,0,0,0, 0,8,0,0,  0,0,8,0, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+     {0,0,8,8, 0,0,0,8, 8,0,0,8, 8,8,0,0,  0,0,8,8, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+     {0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0,  0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+
+
+     {10,10,10,10, 10,10,10,10, 10,10,10,10, 10,10,10,10,  3,0,0,3, 3,0,3,3, 3,3,0,3, 3,0,0,3},
+     {10,10,10,10, 10,10,10,10, 10,10,10,10, 10,10,10,10,  3,0,0,3, 3,0,3,3, 3,3,0,3, 3,0,0,3},
+     {10,10,10,10, 10,10,10,10, 10,10,10,10, 10,10,10,10,  3,0,0,3, 3,0,3,3, 3,3,0,3, 3,0,0,3},
+     {10,10,10,10, 10,10,10,10, 10,10,10,10, 10,10,10,10,  3,3,3,3, 3,3,3,3, 3,3,3,3, 3,3,3,3},
+
+     {10,10,10,10, 10,10,10,10, 10,10,10,10, 10,10,10,10,  3,3,3,3, 3,3,3,3, 3,3,3,3, 3,3,3,3},
+     {10,10,10,10, 10,10,10,10, 10,10,10,10, 10,10,10,10,  3,0,0,3, 3,0,0,3, 3,0,0,3, 3,0,0,3},
+     {10,10,10,10, 10,10,10,10, 10,10,10,10, 10,10,10,10,  3,0,0,3, 3,0,0,3, 3,0,0,3, 3,0,0,3},
+     {10,10,10,10, 10,10,10,10, 10,10,10,10, 10,10,10,10,  3,0,0,3, 3,0,0,3, 3,0,0,3, 3,0,0,3},
+
+     {10,10,10,10, 10,10,10,10, 10,10,10,10, 10,10,10,10,  0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+     {10,10,10,10, 10,10,10,10, 10,10,10,10, 10,10,10,10,  0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+     {10,10,2008,10, 10,10,10,2008, 10,10,10,10, 2008,2008,0,0,  0,0,8,0, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+     {10,2008,2008,2008, 10,10,2008,10, 2008,10,10,2008, 0,0,0,0,  0,8,8,8, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+
+     {10,10,2008,10, 10,10,2008,2008, 2008,10,10,2008, 2008,10,10,10,  0,0,8,0, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+     {10,10,2008,10, 10,10,2008,10, 10,10,10,10, 10,2008,10,10,  0,0,8,0, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+     {10,10,2008,2008, 10,10,10,2008, 2008,10,10,2008, 2008,2008,10,10,  0,0,8,8, 0,0,0,0, 0,0,0,0, 0,0,0,0},
+     {10,10,10,10, 10,10,10,10, 10,10,10,10, 10,10,10,10,  0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0}
+   };
 
    open_folder(cfg, "Hits_and_Sums");
    open_folder(cfg, "Hits");
@@ -341,6 +685,8 @@ int init_chan_histos(Config *cfg)
    }
    ts_hist = H1_BOOK(cfg, "ts", "Timestamp", 163840, 0, 163840);
    gc_hist = H1_BOOK(cfg, "gc", "ZDS GRIF-CAEN", 16, 0, 16);
+   test_histogram = H2_BOOK(cfg, "Test", "Test matrix", 32, 0, 32, 32, 0, 32); // non symmeterized
+  // test_histogram = H2_BOOK(cfg, "Test", "Test matrix", 32, 0, 32, 0, 0, 32); // symmeterized
    close_folder(cfg);
    open_folder(cfg, "Multiplicities");
    for(i=0; i<MAX_SUBSYS; i++){ mult_hist[i] = NULL;
@@ -410,6 +756,16 @@ int init_chan_histos(Config *cfg)
             /*  cfd_hist[i]->suppress = wave_hist[i]->suppress = */ 1;
       }
    }
+
+   // Fill the test matrix here after initialization
+   for(i=0; i<32; i++){
+     for(j=0; j<32; j++){
+       for(k=0; k<test_matrix_data[i][j]; k++){
+         test_histogram->Fill(test_histogram, j, i, 1);
+       }
+     }
+   }
+
    return(0);
 }
 
@@ -475,7 +831,7 @@ int fill_chan_histos(Grif_event *ptr)
 int init_singles_histos(Config *cfg)
 {
   char title[STRING_LEN], handle[STRING_LEN];
-  int i;
+  int i,j;
   open_folder(cfg, "Hits_and_Sums");
   open_folder(cfg, "Sums");
   sprintf(title,  "Addback_Sum_Energy"); sprintf(handle, "Addback_Sum_E");
@@ -564,6 +920,12 @@ int init_singles_histos(Config *cfg)
   sprintf(title, "ARIESEnergy_CrystalNum"); sprintf(handle, "AriesEnergy_Xtal");
   aries_xtal     = H2_BOOK(cfg, handle, title, 80, 0, 80,
                                             E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+  sprintf(title, "TAC_LBL_ART_vs_LBL_Num"); sprintf(handle, "TAC_ART_LBL_LBL_Xtal");
+  labr_tac_xtal     = H2_BOOK(cfg, handle, title, 16, 0, 16,
+			                                      E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+  sprintf(title, "TAC_LBL_ART_vs_ART_Num"); sprintf(handle, "TAC_ART_LBL_ART_Xtal");
+  art_tac_xtal     = H2_BOOK(cfg, handle, title, 80, 0, 80,
+			                                      E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
   sprintf(title, "DES_Wall_En_DetNum"); sprintf(handle, "DSW_En_Xtal");
   desw_e_xtal     = H2_BOOK(cfg, handle, title, 64, 0, 64,
                                             E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
@@ -581,6 +943,99 @@ int init_singles_histos(Config *cfg)
                                             E_2D_RCMP_SPEC_LENGTH, 0, E_2D_RCMP_SPEC_LENGTH);
     }
   close_folder(cfg);
+  open_folder(cfg, "Pile-up");
+  sprintf(title,  "Pile-up_type"); sprintf(handle, "PU_type");
+  ge_pu_type = H1_BOOK(cfg, handle, title, 64, 0, 64);
+  sprintf(title,  "nhits_type"); sprintf(handle, "nhits_type");
+  ge_nhits_type = H1_BOOK(cfg, handle, title, 64, 0, 64);
+  sprintf(title,  "Pile-up_class"); sprintf(handle, "PU_class");
+  ge_pu_class = H1_BOOK(cfg, handle, title, 64, 0, 64);
+  for(i=0; i<NUM_PILEUP_CLASSES; i++){
+    sprintf( title, "%s", ge_pu_class_titles[i]);
+    sprintf(handle, "%s", ge_pu_class_handles[i]);
+    ge_sum_class[i] = H1_BOOK(cfg, handle, title, E_SPEC_LENGTH, 0, E_SPEC_LENGTH);
+  }
+  for(i=0; i<NUM_PILEUP_CLASSES; i++){
+    sprintf( title, "E_vs_k_%s", ge_pu_class_titles[i]);
+    sprintf(handle, "E_vs_k_%s", ge_pu_class_handles[i]);
+    ge_e_vs_k_class[i] = H2_BOOK(cfg, handle, title, 2048, 0, 2048,
+                                                      512, 0,  512);
+  }
+  sprintf(title, "GeEnergy_CrystalNum_single_hit"); sprintf(handle, "GeEnergy_Xtal_single_hit");
+  ge_xtal_1hit     = H2_BOOK(cfg, handle, title, 64, 0, 64,
+			                                    E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+  sprintf(title, "GeEnergy_CrystalNum_2_hit"); sprintf(handle, "GeEnergy_Xtal_2_hit");
+  ge_xtal_2hit     = H2_BOOK(cfg, handle, title, 64, 0, 64,
+			                                    E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+  sprintf(title, "GeEnergy_CrystalNum_3_hit"); sprintf(handle, "GeEnergy_Xtal_3_hit");
+  ge_xtal_3hit     = H2_BOOK(cfg, handle, title, 64, 0, 64,
+			                                    E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+
+for(i=0; i<N_HPGE; i++){
+    sprintf( title, "Ge%02d_single_hit", i); sprintf(handle, "Ge%02d_single_hit", i);
+    ge_1hit[i] = H1_BOOK(cfg, handle, title, E_SPEC_LENGTH, 0, E_SPEC_LENGTH);
+    sprintf( title, "Ge%02d_2hit_pileup", i); sprintf(handle, "Ge%02d_2hit_pileup", i);
+    ge_2hit[i] = H1_BOOK(cfg, handle, title, E_SPEC_LENGTH, 0, E_SPEC_LENGTH);
+    sprintf( title, "Ge%02d_3hit_pileup", i); sprintf(handle, "Ge%02d_3hit_pileup", i);
+    ge_3hit[i] = H1_BOOK(cfg, handle, title, E_SPEC_LENGTH, 0, E_SPEC_LENGTH);
+}
+
+    sprintf(title,  "Pile-up_3Hits_detlaT_1_2"); sprintf(handle, "PU_dt12");
+    ge_pu_dt12 = H1_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+    sprintf(title,  "Pile-up_3Hits_detlaT_1_3"); sprintf(handle, "PU_dt13");
+    ge_pu_dt13 = H1_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+
+  close_folder(cfg);
+  open_folder(cfg, "Pile-up Corrections");
+                  // 2d energy1 vs k1 matrix for pileup corrections
+                  // Use for mapping k1 dependence of E1
+  for(i=0; i<N_HPGE; i++){
+    sprintf( title, "Ge%02d_E_vs_k_1st_of_2hit", i);
+    sprintf(handle, "Ge%02d_E_vs_k_1st_of_2hit", i);
+    ge_e_vs_k_2hit_first[i] = H2_BOOK(cfg, handle, title, 2048, 0, 2048,
+                                                    512, 0,  512);
+  }
+
+                  // 2d energy2 vs k2 matrix for pileup corrections
+                  // Not actually used for mapping corrections, but useful diagnostic
+  for(i=0; i<N_HPGE; i++){
+    sprintf( title, "Ge%02d_E_vs_k_2nd_of_2hit", i);
+    sprintf(handle, "Ge%02d_E_vs_k_2nd_of_2hit", i);
+    ge_e_vs_k_2hit_second[i] = H2_BOOK(cfg, handle, title, 2048, 0, 2048,
+                                                    512, 0,  512);
+  }
+
+                // 2d energy2 vs k2 matrix for pileup corrections (will be gated on E1 = x rays)
+                // Use for mapping k2 dependence of E2
+        for(i=0; i<N_HPGE; i++){
+                    sprintf( title, "Ge%02d_PU2_E2_vs_k2_E1gated_on_Xrays", i);
+                    sprintf( handle, "Ge%02d_PU2_E2_vs_k2_E1gated_on_Xrays", i);
+                    ge_PU2_e2_v_k_gatedxrays[i] = H2_BOOK(cfg, handle, title, 2048, 0, 2048,
+                                                                            512, 0, 512);
+          }
+
+          // 2d energy1 vs energy2 matrix for pileup corrections
+          // Use for mapping E1 dependence of E2
+          for(i=0; i<N_HPGE; i++){
+            sprintf( title, "Ge%02d_PU2_E2_vs_k2_E1gated_on_1408keV", i);
+            sprintf( handle, "Ge%02d_PU2_E2_vs_k2_E1gated_on_1408keV", i);
+            ge_PU2_e2_v_k_gated1408[i] = H2_BOOK(cfg, handle, title, 512, 0, 512,
+                                                                     512, 0, 512);
+            }
+
+/*
+            // To be removed...
+            for(i=0; i<N_HPGE; i++){
+              for(j=0; j<N_K; j++){
+                sprintf( title, "Ge%02d_PU2_E2_vs_E1_k%d", i,((j*20)+10));
+                sprintf(handle, "Ge%02d_PU2_E2_vs_E1_k%d", i,((j*20)+10));
+                ge_PU2_e2_v_e1_k[i][j] = H2_BOOK(cfg, handle, title, 2048, 0, 2048,
+                                                                      512, 0,  512);
+                }
+              }
+              */
+
+  close_folder(cfg);
   close_folder(cfg);
   return(0);
 }
@@ -591,12 +1046,14 @@ int init_coinc_histos(Config *cfg)
   char tmp[STRING_LEN];
   int i,j,k;
 
+  // Set the ybins as SYMMETERIZE to create a symmeterized 2d histogram.
+
   open_folder(cfg, "Hits_and_Sums");
   open_folder(cfg, "Delta_t");
   for(i=0; i<N_DT; i++){ // Create delta-t spectra
     dt_hist[i] = H1_BOOK(cfg, dt_handles[i], dt_handles[i], DT_SPEC_LENGTH, 0, DT_SPEC_LENGTH);
   }
-  for(i=0; i<N_LABR; i++){ // Create delta-t spectra separately for each TAC
+  for(i=0; i<N_TACS; i++){ // Create delta-t spectra separately for each TAC
   sprintf(title, "dt_labr_tac%d",i+1);
     dt_tacs_hist[i] = H1_BOOK(cfg, title, title, DT_SPEC_LENGTH, 0, DT_SPEC_LENGTH);
   }
@@ -606,19 +1063,22 @@ int init_coinc_histos(Config *cfg)
   open_folder(cfg, "Coinc");
   sprintf(title, "Addback_GG"); sprintf(handle, "Addback_GG");
   gg_ab     = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
-		                                      E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+		                                      SYMMETERIZE, 0, E_2D_SPEC_LENGTH);
   sprintf(title, "GG"); sprintf(handle, "GG");
   gg        = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
-		                                      E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+		                                      SYMMETERIZE, 0, E_2D_SPEC_LENGTH);
   sprintf(title, "GePaces"); sprintf(handle, "GePaces");
   ge_paces  = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
 		                                      E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
   sprintf(title, "GeLabr"); sprintf(handle, "GeLabr");
    ge_labr   = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
 		                                       E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
-   sprintf(title, "GeAries"); sprintf(handle, "GeAries");
-    ge_art   = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
+   sprintf(title, "GeZds"); sprintf(handle, "GeZds");
+    ge_zds   = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
  		                                         E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+     sprintf(title, "GeAries"); sprintf(handle, "GeAries");
+      ge_art   = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
+   		                                         E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
    sprintf(title, "LaBrAries"); sprintf(handle, "LaBrAries");
     labr_art   = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
    		                                         E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
@@ -627,10 +1087,13 @@ int init_coinc_histos(Config *cfg)
      		                                         E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
    sprintf(title, "AriesAries"); sprintf(handle, "AriesAries");
     art_art   = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
-     		                                        E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+     		                                        SYMMETERIZE, 0, E_2D_SPEC_LENGTH);
    sprintf(title, "LaBrLabr"); sprintf(handle, "LaBrLabr");
    labr_labr   = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
- 		                                         E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+ 		                                         SYMMETERIZE, 0, E_2D_SPEC_LENGTH);
+sprintf(title, "LaBrZds"); sprintf(handle, "LaBrZds");
+labr_zds   = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
+                                          E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
      sprintf(title, "DSWDSW"); sprintf(handle, "DSWDSW");
      dsw_dsw        = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
    		                                      E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
@@ -648,7 +1111,10 @@ int init_coinc_histos(Config *cfg)
                                             E_2D_RCMP_SPEC_LENGTH, 0, E_2D_RCMP_SPEC_LENGTH);
    sprintf(title, "GGoppo"); sprintf(handle, "GGoppo");
    gg_opp    = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
-		                                       E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH);
+		                                       SYMMETERIZE, 0, E_2D_SPEC_LENGTH);
+  sprintf(title, "Addback_GGoppo"); sprintf(handle, "AB_GGoppo");
+  gg_ab_opp    = H2_BOOK(cfg, handle, title, E_2D_SPEC_LENGTH, 0, E_2D_SPEC_LENGTH,
+                                          SYMMETERIZE, 0, E_2D_SPEC_LENGTH);
    close_folder(cfg);
    open_folder(cfg, "Hits");
    sprintf(title, "GeGeHit"); sprintf(handle, "GGHit");
@@ -678,11 +1144,18 @@ rcmp_fb[i] = H2_BOOK(cfg, rcmp_fb_handles[i], rcmp_fb_handles[i], E_2D_RCMP_SPEC
                                     E_2D_RCMP_SPEC_LENGTH, 0, E_2D_RCMP_SPEC_LENGTH);
 }
    close_folder(cfg);
+   close_folder(cfg);
+   open_folder(cfg, "Ang_Corr");
    open_folder(cfg, "GG_Ang_Corr");
-   for(i=0; i<N_GE_ANG_CORR; i++){ // Create Ge-Ge angular correlation spectra
-     sprintf(tmp,"Ge-Ge_angular_bin%d",i);
-     gg_ang_corr_hist[i] = H2_BOOK(cfg, tmp, tmp, GE_ANG_CORR_SPEC_LENGTH, 0, GE_ANG_CORR_SPEC_LENGTH,
-                                                  GE_ANG_CORR_SPEC_LENGTH, 0, GE_ANG_CORR_SPEC_LENGTH);
+   for(i=0; i<N_GE_ANG_CORR; i++){ // Create Ge-Ge angular correlation spectra for HPGe at 110mm
+     sprintf(tmp,"Ge-Ge_110mm_angular_bin%d",i);
+     gg_ang_corr_110_hist[i] = H2_BOOK(cfg, tmp, tmp, GE_ANG_CORR_SPEC_LENGTH, 0, GE_ANG_CORR_SPEC_LENGTH,
+                                                              SYMMETERIZE, 0, GE_ANG_CORR_SPEC_LENGTH);
+   }
+   for(i=0; i<N_GE_ANG_CORR; i++){ // Create Ge-Ge angular correlation spectra for HPGe at 145mm
+     sprintf(tmp,"Ge-Ge_145mm_angular_bin%d",i);
+     gg_ang_corr_145_hist[i] = H2_BOOK(cfg, tmp, tmp, GE_ANG_CORR_SPEC_LENGTH, 0, GE_ANG_CORR_SPEC_LENGTH,
+                                                              SYMMETERIZE, 0, GE_ANG_CORR_SPEC_LENGTH);
    }
    close_folder(cfg);
    open_folder(cfg, "Ge_ART_Ang_Corr");
@@ -696,20 +1169,44 @@ rcmp_fb[i] = H2_BOOK(cfg, rcmp_fb_handles[i], rcmp_fb_handles[i], E_2D_RCMP_SPEC
    for(i=0; i<N_DSW_DSW_ANG_CORR; i++){ // Create DSW-DSW angular correlation spectra
      sprintf(tmp,"DSW-DSW_angular_bin%d",i);
      dsw_dsw_ang_corr_hist[i] = H2_BOOK(cfg, tmp, tmp, DSW_ANG_CORR_SPEC_LENGTH, 0, DSW_ANG_CORR_SPEC_LENGTH,
-                                                       DSW_ANG_CORR_SPEC_LENGTH, 0, DSW_ANG_CORR_SPEC_LENGTH);
+                                                                    SYMMETERIZE, 0, DSW_ANG_CORR_SPEC_LENGTH);
    }
    close_folder(cfg);
+   close_folder(cfg);
+   open_folder(cfg, "Fast-Timing");
    open_folder(cfg, "LBL_TACs");
+   for(i=0; i<N_LABR; i++){ // intialize the index for the TAC coincidence pair spectra
+     for(j=0; j<N_LABR; j++){
+       tac_labr_hist_index[i][j] = -1;
+     }
+   }
    k=-1;
    for(i=1; i<=N_LABR; i++){ // Create TAC coincidence pair spectra
      for(j=(i+1); j<=N_LABR; j++){
        k++;
      sprintf(tmp,"TAC_%d_%d",i,j);
      tac_labr_hist[k] = H1_BOOK(cfg, tmp, tmp, E_TAC_SPEC_LENGTH, 0, E_TAC_SPEC_LENGTH);
+     tac_labr_hist_index[i-1][j-1] = k;
      }
    }
+ sprintf(tmp,"TAC_%d_%d",2,1); // Add additional histogram (2_1) needed for Compton Walk corrections
+ tac_labr_hist[++k] = H1_BOOK(cfg, tmp, tmp, E_TAC_SPEC_LENGTH, 0, E_TAC_SPEC_LENGTH);
+ tac_labr_hist_index[1][0] = k;
+
    close_folder(cfg);
+      open_folder(cfg, "LBL_Walk");
+
+      for(i=1; i<=N_LABR; i++){ // Create TAC Compton Walk matrices for calibrations
+        sprintf(tmp,"TAC_%d_CompWalk",i);
+        tac_labr_CompWalk[i-1] = H2_BOOK(cfg, tmp, tmp, 2048, 0, 2048,
+      			                                            2048, 0, 2048);
+      }
+      close_folder(cfg);
    open_folder(cfg, "ART_TACs");
+     sprintf(tmp,"TAC_ART_LBL_LBLSUM");
+   tac_aries_lbl_sum = H1_BOOK(cfg, tmp, tmp, E_TAC_SPEC_LENGTH, 0, E_TAC_SPEC_LENGTH);
+     sprintf(tmp,"TAC_ART_LBL_ARTSUM");
+   tac_aries_art_sum = H1_BOOK(cfg, tmp, tmp, E_TAC_SPEC_LENGTH, 0, E_TAC_SPEC_LENGTH);
  sprintf(tmp,"TAC-ARIES-LaBr3-1275keV");
  aries_tac = H1_BOOK(cfg, tmp, tmp, E_TAC_SPEC_LENGTH, 0, E_TAC_SPEC_LENGTH);
 sprintf(tmp,"TAC-ARTE-LaBr3-1275keV");
@@ -727,12 +1224,13 @@ sprintf(tmp,"TAC-ARIES-Energy");
 
    close_folder(cfg);
    close_folder(cfg);
+
    return(0);
 }
 
 int fill_singles_histos(Grif_event *ptr)
 {
-  int i, j, dt, chan, pos, sys, elem, clover, ge_addback_gate = 25, ge_sum_gate = 25;
+  int i, j, dt, pu, nhits, chan, pos, sys, elem, clover, c1,c2, index, ge_addback_gate = 25, ge_sum_gate = 25;
   char *name, c;
   long ts;
 
@@ -745,10 +1243,10 @@ int fill_singles_histos(Grif_event *ptr)
 
   sys = ptr->subsys;
   // Check this is a valid susbsytem type
-  if( sys >=0 && sys < MAX_SUBSYS ){
-    if( mult_hist[sys] != NULL ){ mult_hist[sys]->Fill(mult_hist[sys], ptr->fold, 1);  }
+  if( sys <0 || sys > MAX_SUBSYS ){
+    if( mult_hist[sys] != NULL && sys>=0 && sys<MAX_SUBSYS){ mult_hist[sys]->Fill(mult_hist[sys], ptr->fold, 1);  }
+    return(-1);
   }
-
 
   // Check that this is the correctly assigned subsystem type, based on the datatype in the PSC table
   //if( sys != dtype_subsys[dtype_table[ptr->chan]] ){
@@ -779,6 +1277,54 @@ int fill_singles_histos(Grif_event *ptr)
          }else{
            ge_sum_ds->Fill(ge_sum_ds, (int)ptr->ecal, 1);
          }
+
+         // Pile-up
+         pu = ptr->pileup;
+         ge_pu_type->Fill(ge_pu_type, (int)pu, 1);
+         nhits = ptr->nhit;
+         ge_nhits_type->Fill(ge_nhits_type, (int)nhits, 1);
+
+         // The PU class is assigned in the presort, use ptr->psd for pileup class
+         ge_pu_class->Fill(ge_pu_class, ptr->psd, 1);  // pileup class value
+         ge_sum_class[ptr->psd]->Fill(ge_sum_class[ptr->psd], (int)ptr->ecal, 1);  // energy spectrum of pileup class value
+         ge_e_vs_k_class[ptr->psd]->Fill(ge_e_vs_k_class[ptr->psd], (int)ptr->ecal, (int)ptr->integ, 1);  // energy spectrum of pileup class value
+
+         if(ptr->psd == 1){  // single hit
+           ge_1hit[pos]->Fill(ge_1hit[pos], (int)ptr->ecal, 1);
+           ge_xtal_1hit->Fill(ge_xtal_1hit, pos, (int)ptr->ecal, 1);
+          }
+         if(ptr->psd > 9 && ptr->psd < 13){ // 3-hit pileup
+           ge_3hit[pos]->Fill(ge_3hit[pos], (int)ptr->ecal, 1);
+           ge_xtal_3hit->Fill(ge_xtal_3hit, pos, (int)ptr->ecal, 1);
+          }
+
+         if(ptr->psd == 3 || ptr->psd == 5 || ptr->psd == 7){ // Select first Hit of two pileup events
+           ge_2hit[pos]->Fill(ge_2hit[pos], (int)ptr->ecal, 1); // 2-hit pileup
+           ge_xtal_2hit->Fill(ge_xtal_2hit, pos, (int)ptr->ecal, 1);
+         // The following used for mapping the k2 dependant correction
+           ge_e_vs_k_2hit_first[pos]->Fill(ge_e_vs_k_2hit_first[pos], (int)ptr->ecal, (int)ptr->integ, 1);  // energy1 vs k1 spectrum of 1st Hit of 2hit pileup events
+         }
+         if(ptr->psd == 4 || ptr->psd == 6 || ptr->psd == 8){ // Select second Hit of two pileup events
+           ge_2hit[pos]->Fill(ge_2hit[pos], (int)ptr->ecal, 1); // 2-hit pileup
+           ge_xtal_2hit->Fill(ge_xtal_2hit, pos, (int)ptr->ecal, 1);
+           // The following is not used for mapping the corrections but is a useful diagnostic
+           ge_e_vs_k_2hit_second[pos]->Fill(ge_e_vs_k_2hit_second[pos], (int)ptr->ecal, (int)ptr->integ, 1);  // energy2 vs k2 spectrum of 2nd Hit of 2hit pileup events
+
+           // The following 1408keV matrix used for mapping the E1 offset correction
+           if(ptr->e4cal > 1380 && ptr->e4cal < 1420){ // Require 152Eu 1408keV as E1 for mapping the E1 offset
+             ge_PU2_e2_v_k_gated1408[pos]->Fill(ge_PU2_e2_v_k_gated1408[pos], (int)ptr->ecal, (int)ptr->integ, 1);  // e2 vs k2 for fixed e1
+           }
+
+           // The following x-rays matrix used for mapping the k2 dependant correction for E2
+           // E2 vs k2 gated on fixed x-ray energies
+           // The E2 energy has 1272keV subtracted from it to put it around 136keV to allow a smaller matrix side and easier processing in the app
+           if(ptr->e4cal > 5 && ptr->e4cal < 50){ // Require 152Eu x rays as E1 for mapping the k2 dependance
+             ge_PU2_e2_v_k_gatedxrays[pos]->Fill(ge_PU2_e2_v_k_gatedxrays[pos], (int)(ptr->ecal - 1272), (int)ptr->integ, 1);  // e2 vs k2 for fixed e1
+           }
+         }
+
+         if(ptr->psd==7){ ge_pu_dt12->Fill(ge_pu_dt12, (int)(ptr->ts_int+DT_SPEC_LENGTH/2), 1); }
+         if(ptr->psd==8){ ge_pu_dt13->Fill(ge_pu_dt13, (int)(ptr->ts_int+DT_SPEC_LENGTH/2), 1); }
 
          // Ge-Addback
          clover = (int)(pos/16)+1;
@@ -855,6 +1401,33 @@ int fill_singles_histos(Grif_event *ptr)
    case SUBSYS_SCEPTAR:
    break;
    case SUBSYS_LABR_T:
+
+   // Save LBL channel number into ptr->q2 or q3 or q4
+   // Save LBL energy ecal into TAC ptr-ecal2 or ecal3 or ecal4
+   if(ptr->e4cal>0){ break; } // more than two LaBr3 in coincidence with this TAC event so reject
+   if( ptr->q2 >=          0 && ptr->q3 >=           0 &&
+       ptr->q2 < MAX_DAQSIZE && ptr->q3  < MAX_DAQSIZE ){
+      c1 = crystal_table[ptr->q2]-1; // c1 runs from 0 to 7
+      c2 = crystal_table[ptr->q3]-1; // c2 runs from 0 to 7
+   } else { c1 = c2 = -1; }
+   if(c1>=0 && c1<N_LABR && c2>=0 && c2<N_LABR){
+     index = tac_labr_hist_index[c1][c2];
+     if(index>=0 && index<(int)((N_LABR)*(N_LABR-1)/2)+1){
+       tac_labr_hist[index]->Fill(tac_labr_hist[index], (int)(ptr->ecal), 1);
+     }
+
+     // Compton Walk matrix for calibrations
+     // First LBL gated on 1332keV, this matrix is second LBL E vs TAC
+     if(crystal_table[ptr->chan] == 1){ // Use TAC01
+       if(c1 == 0 && c2>0 && ptr->e2cal>1252 && ptr->e2cal<1412){ // LBL01 gated on 1332keV
+         tac_labr_CompWalk[c2]->Fill(tac_labr_CompWalk[c2], (int)(ptr->ecal/4), (int)ptr->e3cal, 1); // TAC01 and other LBL energy
+       }
+       if(c1 == 0 && c2==1 && ptr->e3cal>1252 && ptr->e3cal<1412){ // LBL02 gated on 1332keV
+         tac_labr_CompWalk[c1]->Fill(tac_labr_CompWalk[c1], (int)(ptr->ecal/4), (int)ptr->e2cal, 1); // TAC01 and other LBL energy
+       }
+     }
+   }
+
    break;
    case SUBSYS_DESCANT:
    break;
@@ -976,27 +1549,31 @@ int fill_coinc_histos(int win_idx, int frag_idx)
 
             dt_hist[0]->Fill(dt_hist[0], (int)(abs_dt+DT_SPEC_LENGTH/2), 1); // ge-ge
             // Ge-Ge matrices
-            if( alt->dtype == 0 && abs_dt < gg_gate ){                 // ge-ge (and addback)
+            if( abs_dt < gg_gate ){ // ge-ge (and addback)
               gg->Fill(gg, (int)ptr->ecal, (int)alt->ecal, 1);
               if( ptr->esum >= 0 &&  alt->esum >= 0 ){
                 gg_ab->Fill(gg_ab, (int)ptr->esum, (int)alt->esum, 1);
               }
 
               c1 = crystal_table[ptr->chan];
-              if( c1 >= 1 && c1 <= 64 ){
+              if( c1 >= 0 && c1 <= 63 ){
                 c2 = crystal_table[alt->chan];
-                if( c2 >= 1 && c2 <= 64 ){
+                if( c2 >= 0 && c2 <= 63 ){
                   gg_hit->Fill(gg_hit, c1, c2, 1);
-                  c1--; c2--;
-                  // Ge-Ge angular correlations
-                  // Fill the appropriate angular bin spectrum
-                  index = ge_angles_145mm[c1][c2];
-                  gg_ang_corr_hist[index]->Fill(gg_ang_corr_hist[index], (int)ptr->ecal, (int)alt->ecal, 1);
 
-                  // Ge-Ge with 180 degrees between Ge1 and Ge2
+                  // Ge-Ge with 180 degrees between Ge1 and Ge2 used for summing corrections
                   if( c2 == grif_opposite[c1] ){
                     gg_opp->Fill(gg_opp, (int)ptr->ecal, (int)alt->ecal, 1);
+                    gg_ab_opp->Fill(gg_ab_opp, (int)ptr->esum, (int)alt->esum, 1);
                   }
+
+                  // Ge-Ge angular correlations
+                  // Fill the appropriate angular bin spectrum
+                  // c1 and c2 run from 0 to 63 for ge_angles_145mm.
+                  index = ge_angles_110mm[c1][c2];
+                  gg_ang_corr_110_hist[index]->Fill(gg_ang_corr_110_hist[index], (int)ptr->ecal, (int)alt->ecal, 1);
+                  index = ge_angles_145mm[c1][c2];
+                  gg_ang_corr_145_hist[index]->Fill(gg_ang_corr_145_hist[index], (int)ptr->ecal, (int)alt->ecal, 1);
                 }
               }
             }
@@ -1050,6 +1627,7 @@ int fill_coinc_histos(int win_idx, int frag_idx)
             if( abs_dt < gg_gate ){
               ge_sum_b->Fill(ge_sum_b, (int)ptr->ecal, 1); // beta-gated Ge sum energy spectrum
               ge_sum_b_zds->Fill(ge_sum_b_zds, (int)ptr->ecal, 1); // Zds-gated Ge sum energy spectrum
+                ge_zds->Fill(ge_zds, (int)ptr->ecal, (int)alt->ecal, 1);
             }
           }
           break;
@@ -1114,21 +1692,26 @@ int fill_coinc_histos(int win_idx, int frag_idx)
 
       case SUBSYS_LABR_L: // Labr matrices
       switch(alt->subsys){
-        case SUBSYS_HPGE:
+        case SUBSYS_HPGE: // labr-ge
         // Only use GRGa
         if(output_table[alt->chan] == 1){
           dt_hist[5]->Fill(dt_hist[5], (int)(abs_dt+DT_SPEC_LENGTH/2), 1); // labr-ge
+          if( abs_dt < gg_gate ){
+            ge_labr->Fill(ge_labr, (int)alt->ecal, (int)ptr->ecal, 1);
+          }
         }
         break;
-        case SUBSYS_LABR_L:
+        case SUBSYS_LABR_L: // labr-labr
         dt_hist[8]->Fill(dt_hist[8], (int)(abs_dt+DT_SPEC_LENGTH/2), 1); // labr-labr
+        labr_labr->Fill(labr_labr, (int)ptr->ecal, (int)alt->ecal, 1);
         break;
         case SUBSYS_ZDS: // labr-zds
         if(output_table[alt->chan]==1){ // GRIF16 ZDS
           dt_hist[17]->Fill(dt_hist[17], (int)(abs_dt+DT_SPEC_LENGTH/2), 1);
+          labr_zds->Fill(labr_zds, (int)ptr->ecal, (int)alt->ecal, 1);
         }
         break;
-        case SUBSYS_ARIES:
+        case SUBSYS_ARIES: // labr-aries
         if(polarity_table[alt->chan] == 1){ // Only use ARIES Standard Output
           dt_hist[12]->Fill(dt_hist[12], (int)(abs_dt+DT_SPEC_LENGTH/2), 1); // laBr-aries
           if( ( abs_dt < g_aries_upper_gate) && ptr->ecal>0){
@@ -1146,16 +1729,19 @@ int fill_coinc_histos(int win_idx, int frag_idx)
         break;
         case SUBSYS_LABR_T: // labr-tac
         dt_hist[16]->Fill(dt_hist[16], (int)(abs_dt+DT_SPEC_LENGTH/2), 1);
-        c1=crystal_table[alt->chan];
+        c1=crystal_table[alt->chan];  // assign c1 as TAC number
         if(c1 >= 1 && c1 <=8 ){ // 8 LBL
 
           dt_tacs_hist[c1-1]->Fill(dt_tacs_hist[c1-1], (int)(abs_dt+DT_SPEC_LENGTH/2), 1);
-          if(abs_dt < lbl_tac_gate && c1 == 8){ // ARIES TAC
-            c2 = crystal_table[ptr->chan] - 1;
 
-            if(c2 >= 0 && c2 <8 ){ // 8 Tacs
+
+          if(abs_dt < lbl_tac_gate && c1 == 8){ // labr-tac with the ARIES TAC
+            c2 = crystal_table[ptr->chan] - 1; // assign c2 as LBL number
+
+            if(c2 >= 0 && c2 <8 ){ // 8 LBL detectors
               corrected_tac_value = (int)alt->ecal + tac_offset[c2];
               tac_aries_lbl_hist[c2]->Fill(tac_aries_lbl_hist[c2], corrected_tac_value, 1); // tac spectrum per LBL
+              tac_aries_lbl_sum->Fill(tac_aries_lbl_sum, corrected_tac_value, 1); // sum tac spectrum including all LBL
               if(ptr->ecal >1225 && ptr->ecal <1315){ // gate on LaBr3 energy 1275keV
                 aries_tac->Fill(aries_tac, (int)corrected_tac_value, 1); // tac spectrum gated on 1275keV
                 aries_tac_artEn->Fill(aries_tac_artEn, alt->e4cal, 1); // ARIES energy spectrum in coincidence with TAC
@@ -1164,8 +1750,9 @@ int fill_coinc_histos(int win_idx, int frag_idx)
                 }
               }
             }
-          }
-        }
+          } // end of ARIES TAC
+
+        } // end of all LaBr3 TAC
 
         break;
         default: break; // unprocessed coincidence combinations
@@ -1280,7 +1867,11 @@ int fill_coinc_histos(int win_idx, int frag_idx)
       case SUBSYS_LABR_T: // aries-tac
       if(crystal_table[alt->chan] == 8){ // ARIES TAC
         dt_hist[14]->Fill(dt_hist[14], (int)(abs_dt+DT_SPEC_LENGTH/2), 1);
-        tac_aries_art_hist[crystal_table[ptr->chan]-1]->Fill(tac_aries_art_hist[crystal_table[ptr->chan]-1], (int)alt->ecal, 1); // tac spectrum per ART tiles
+        tac_aries_art_sum->Fill(tac_aries_art_sum, (int)alt->ecal, 1); // sum tac spectrum including all art
+        c2 = crystal_table[ptr->chan]-1;
+        if(c2>=0 && c2<N_ARIES){
+        tac_aries_art_hist[c2]->Fill(tac_aries_art_hist[c2], (int)alt->ecal, 1); // tac spectrum per ART tiles
+      }
       }
       break;
       default: break;
@@ -1316,8 +1907,11 @@ int fill_coinc_histos(int win_idx, int frag_idx)
       // Only use GRGa
       if(output_table[alt->chan] == 1){
         dt_hist[3]->Fill(dt_hist[3], (int)(abs_dt+DT_SPEC_LENGTH/2), 1);
-        ge_sum_b->Fill(ge_sum_b, (int)alt->ecal, 1); // beta-gated Ge sum energy spectrum
-        ge_sum_b_zds->Fill(ge_sum_b_zds, (int)alt->ecal, 1); // Zds-gated Ge sum energy spectrum
+        if( abs_dt < gg_gate ){
+          ge_sum_b->Fill(ge_sum_b, (int)alt->ecal, 1); // beta-gated Ge sum energy spectrum
+          ge_sum_b_zds->Fill(ge_sum_b_zds, (int)alt->ecal, 1); // Zds-gated Ge sum energy spectrum
+          ge_zds->Fill(ge_zds, (int)alt->ecal, (int)ptr->ecal, 1);
+        }
       }
       break;
       case SUBSYS_LABR_L: // zds-labr
@@ -1356,23 +1950,30 @@ int fill_coinc_histos(int win_idx, int frag_idx)
       if(crystal_table[ptr->chan] == 8){ // ARIES TAC
         dt_hist[14]->Fill(dt_hist[14], (int)(abs_dt+DT_SPEC_LENGTH/2), 1);
         tac_aries_art_hist[crystal_table[alt->chan]-1]->Fill(tac_aries_art_hist[crystal_table[alt->chan]-1], (int)ptr->ecal, 1); // tac spectrum per ART tiles
+        tac_aries_art_sum->Fill(tac_aries_art_sum, (int)ptr->ecal, 1); // sum tac spectrum including all art
       }
     }
     break;
     case SUBSYS_LABR_L: // tac-labr
     dt_hist[16]->Fill(dt_hist[16], (int)(abs_dt+DT_SPEC_LENGTH/2), 1);
-    dt_tacs_hist[crystal_table[ptr->chan]-1]->Fill(dt_tacs_hist[crystal_table[ptr->chan]-1], (int)(abs_dt+DT_SPEC_LENGTH/2), 1);
-    if(abs_dt < lbl_tac_gate && crystal_table[ptr->chan] == 8){ // ARIES TAC
+    c1 = crystal_table[ptr->chan]-1;
+    if(c1>=0 && c1<N_LABR){
+      dt_tacs_hist[c1]->Fill(dt_tacs_hist[c1], (int)(abs_dt+DT_SPEC_LENGTH/2), 1); // LBL TACs
 
-      corrected_tac_value = (int)ptr->ecal + tac_offset[crystal_table[alt->chan]-1];
-      tac_aries_lbl_hist[crystal_table[alt->chan]-1]->Fill(tac_aries_lbl_hist[crystal_table[alt->chan]-1], corrected_tac_value, 1); // tac spectrum per LBL
-      if(alt->ecal >1225 && alt->ecal <1315){ // gate on LaBr3 energy 1275keV
 
-        aries_tac->Fill(aries_tac, corrected_tac_value, 1); // tac spectrum gated on 1275keV
-        aries_tac_artEn->Fill(aries_tac_artEn, ptr->e4cal, 1); // ARIES energy spectrum in coincidence with TAC
+      if(abs_dt < lbl_tac_gate && crystal_table[ptr->chan] == 8){ // ARIES TAC
 
-        if(ptr->e4cal >24 && ptr->e4cal <36){ // gate on ARIES energy
-          aries_tac_Egate->Fill(aries_tac_Egate, corrected_tac_value, 1); // tac spectrum gated on 1275keV
+        corrected_tac_value = (int)ptr->ecal + tac_offset[crystal_table[alt->chan]-1];
+        tac_aries_lbl_hist[crystal_table[alt->chan]-1]->Fill(tac_aries_lbl_hist[crystal_table[alt->chan]-1], corrected_tac_value, 1); // tac spectrum per LBL
+        tac_aries_lbl_sum->Fill(tac_aries_lbl_sum, corrected_tac_value, 1); // sum tac spectrum including all LBL
+        if(alt->ecal >1225 && alt->ecal <1315){ // gate on LaBr3 energy 1275keV
+
+          aries_tac->Fill(aries_tac, corrected_tac_value, 1); // tac spectrum gated on 1275keV
+          aries_tac_artEn->Fill(aries_tac_artEn, ptr->e4cal, 1); // ARIES energy spectrum in coincidence with TAC
+
+          if(ptr->e4cal >24 && ptr->e4cal <36){ // gate on ARIES energy
+            aries_tac_Egate->Fill(aries_tac_Egate, corrected_tac_value, 1); // tac spectrum gated on 1275keV
+          }
         }
       }
     }
@@ -1589,7 +2190,7 @@ int read_odb_items(int len, int *bank_data)
          memcpy( midas_runtitle, ptr, i ); midas_runtitle[i] = 0;
          ptr += i+1;
          if( (str = strchr(ptr,d)) == NULL ){ break; }
-      } else if( strncmp(ptr,"</keyarray>",10) == 0 ){ active = 0; arrayptr = '\0';
+      } else if( strncmp(ptr,"</keyarray>",10) == 0 ){ active = 0; arrayptr = (void *)('\0');
       } else if( strncmp(ptr,"<keyarray ",10) == 0 ){
          if( strcmp(path,"/DAQ/params/MSC") != 0 &&
              strcmp(path,"/DAQ/MSC")        != 0 &&
@@ -1655,13 +2256,18 @@ int read_odb_items(int len, int *bank_data)
    //   daq-address, name, type, gains etc.
    //
    gen_derived_odb_tables();
+
    return(0);
 }
 
+extern int read_caen_odb_addresses(int odb_daqsize, unsigned short *addr_table);
 int gen_derived_odb_tables()
 {
   char sys_name[64], crystal, polarity, type;
   int i, j, tmp, pos, element;
+
+  read_caen_odb_addresses(odb_daqsize, (unsigned short *)addrs);
+
   // Also require Ge crystal numbers - which cannot be calculated from
   // data-fragment [only contains array-posn, which is clover number]
   // so calculate them here ...
@@ -1675,7 +2281,7 @@ int gen_derived_odb_tables()
   memset(dtype_subsys,   0xff,  MAX_SUBSYS*sizeof(int));
   memset(subsys_dtype,   0xff,  MAX_SUBSYS*sizeof(int));
   for(i=0; i<MAX_DAQSIZE && i<odb_daqsize; i++){
-    if( (tmp=sscanf(chan_name[i], "%3c%d%c%c%d%c", &sys_name, &pos, &crystal, &polarity, &element, &type)) != 6 ){
+    if( (tmp=sscanf(chan_name[i], "%3c%d%c%c%d%c", sys_name, &pos, &crystal, &polarity, &element, &type)) != 6 ){
       fprintf(stderr,"can't decode name[%s] decoded %d of 6 items\n", chan_name[i], tmp );
       continue;
     }

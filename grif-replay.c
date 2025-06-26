@@ -29,7 +29,7 @@ int main(int argc, char *argv[])
    Sort_status *sort = &sort_status;
    int web_arg=1;  Config *cfg;
 
-   sort->reorder = 0;  sort->single_thread = 0;  sort->sort_thread = 1;
+   sort->single_thread = 0;
    pthread_create(&web_thread, NULL,(void* (*)(void*))web_main, &web_arg);
    while( !shutdown_server ){ // monitor file queue and sort any added files
 
@@ -71,12 +71,11 @@ void show_coinc_stats()
    printf("Coinc[500-%4d]:%d\n", MAX_COINC_EVENTS, sum);
 }
 
+static int presort_window_start, sort_window_start;
 static int done_events;
 extern void grif_main(Sort_status *arg);
-extern void reorder_a_main(Sort_status *arg);
-extern void reorder_a_out(Sort_status *arg);
-extern void reorder_b_main(Sort_status *arg);
-extern void reorder_b_out(Sort_status *arg);
+extern void reorder_main(Sort_status *arg);
+extern void reorder_out(Sort_status *arg);
 extern void sort_main(Sort_status *arg);
 static pthread_t midas_thread, grif_thread, ordthrd, ordthr2;
 static int reorder_save, singlethread_save, sortthread_save;
@@ -85,6 +84,7 @@ int sort_next_file(Config *cfg, Sort_status *sort)
 {
    time_t end, start=time(NULL);
    done_events = 0;
+   presort_window_start = sort_window_start = 0;
    memset(&diagnostics, 0, sizeof(Sort_metrics) );
    diagnostics.run_sort_start = start;
    sort->shutdown_midas = sort->end_of_data = 0;
@@ -106,36 +106,24 @@ int sort_next_file(Config *cfg, Sort_status *sort)
       } else {
          pthread_create(&midas_thread, NULL, (void* (*)(void*))midas_module_main, sort);
       }
-      if( reorder_save ){
-        printf("creating reorder threads\n");
-        if( reorder_save == 1 ){
-           pthread_create(&ordthrd,NULL,(void* (*)(void*))reorder_a_main,sort);
-           pthread_create(&ordthr2,NULL,(void* (*)(void*))reorder_a_out, sort);
-        } else {
-           pthread_create(&ordthrd,NULL,(void* (*)(void*))reorder_b_main,sort);
-           pthread_create(&ordthr2,NULL,(void* (*)(void*))reorder_b_out, sort);
-        }
-      }
+      printf("creating reorder threads\n");
+      pthread_create(&ordthrd,NULL,(void* (*)(void*))reorder_main,sort);
+      pthread_create(&ordthr2,NULL,(void* (*)(void*))reorder_out, sort);
+
       while( !sort->odb_ready ){     // wait for midas thread to read odb event
          usleep(1);
       }
-      //user_sort_init();
-      init_default_histos(configs[1], sort); // user histos already defined
-      if( sortthread_save ){       // but defaults depend on odb in datafile
-         pthread_create(&grif_thread, NULL,(void* (*)(void*))grif_main, sort);
-         sort_main(sort);
-      } else {
-         grif_main(sort);
-      }
+      //user_sort_init();   // user histos already defined, but defaul histos
+      init_default_histos(configs[1], sort);     // depend on odb in datafile
+      pthread_create(&grif_thread, NULL,(void* (*)(void*))grif_main, sort);
+
+      sort_main(sort); // this exits when sort is done
+
       sort->shutdown_midas = 1;
       pthread_join(midas_thread, NULL);
-      if( reorder_save ){
-         pthread_join(ordthrd, NULL);
-         pthread_join(ordthr2, NULL);
-      }
-      if( sortthread_save ){
-         pthread_join(grif_thread, NULL);
-      }
+      pthread_join(ordthrd, NULL);
+      pthread_join(ordthr2, NULL);
+      pthread_join(grif_thread, NULL);
    }
    end=time(NULL);
    cfg->midas_start_time = diagnostics.midas_run_start;
@@ -171,37 +159,27 @@ static void online_loop(Config *cfg, Sort_status *sort)
       reorder_save = sort->reorder;
       singlethread_save = sort->single_thread;
       sortthread_save = sort->sort_thread;
+      presort_window_start = sort_window_start = 0;
 
-      if( reorder_save ){
-        printf("creating reorder threads\n");
-        if( reorder_save == 1 ){
-           pthread_create(&ordthrd,NULL,(void* (*)(void*))reorder_a_main,sort);
-           pthread_create(&ordthr2,NULL,(void* (*)(void*))reorder_a_out, sort);
-        } else {
-           pthread_create(&ordthrd,NULL,(void* (*)(void*))reorder_b_main,sort);
-           pthread_create(&ordthr2,NULL,(void* (*)(void*))reorder_b_out, sort);
-        }
-      }
+      printf("creating reorder threads\n");
+      pthread_create(&ordthrd,NULL,(void* (*)(void*))reorder_main,sort);
+      pthread_create(&ordthr2,NULL,(void* (*)(void*))reorder_out, sort);
+
       while( !sort->odb_ready ){     // wait for midas thread to read odb event
          usleep(1);
       }
-      //user_sort_init();
-      init_default_histos(configs[1], sort); // user histos already defined
-      if( sortthread_save ){       // but defaults depend on odb in datafile
-         pthread_create(&grif_thread, NULL,(void* (*)(void*))grif_main, sort);
-         sort_main(sort);
-      } else {
-         grif_main(sort);
-      }
-      // DO NOT SHTUDOWN MIDAS THREAD
+      //user_sort_init();   // user histos already defined, but defaul histos
+      init_default_histos(configs[1], sort);     // depend on odb in datafile
+      pthread_create(&grif_thread, NULL,(void* (*)(void*))grif_main, sort);
+
+      sort_main(sort); // this exits when sort is done
+
       sort->shutdown_midas = 1;
-      if( reorder_save ){
-         pthread_join(ordthrd, NULL);
-         pthread_join(ordthr2, NULL);
-      }
-      if( sortthread_save ){
-         pthread_join(grif_thread, NULL);
-      }
+      // DO NOT SHTUDOWN MIDAS THREAD
+      pthread_join(ordthrd, NULL);
+      pthread_join(ordthr2, NULL);
+      pthread_join(grif_thread, NULL);
+
       end=time(NULL);
       cfg->midas_start_time = diagnostics.midas_run_start;
       cfg->midas_runtime    = diagnostics.midas_last_timestamp+1;
@@ -275,7 +253,7 @@ void sort_main(Sort_status *arg)
    while(1){
       // if( arg->shutdown_midas != 0 ){  break; }
       rd_avail = grifevent_wrpos - grifevent_nxtpos;
-      if( arg->grif_sort_done && rd_avail == 0 ){ break; }
+      if( arg->grif_sort_done && rd_avail < 1 ){ break; }
       if( rd_avail < 1 ){ usleep(usecs); continue; }
       process_event(&grif_event[nxtpos], nxtpos);
       nxtpos = ++grifevent_nxtpos % MAX_COINC_EVENTS;
@@ -300,8 +278,7 @@ int process_event(Grif_event *ptr, int slot)
       midas_status(cur_time); reorder_status(cur_time);  grif_status(cur_time);
       printf("ProcEvt: %10d[Good:%3d%% Skip:%3d%% WinFull:%3d%%] %6.3f Mevt/s\n",
              calls, (int)(100.0*(calls-skipped-prefull)/calls),
-             (int)(100.0*skipped/calls), (int)(100.0*prefull/calls,
-                                               de/(1000000.0*dt)  )
+             (int)(100.0*skipped/calls), (int)(100.0*prefull/calls), (de/(1000000.0*dt))
       );
       prv_time = cur_time;
    }
@@ -340,9 +317,8 @@ extern char chan_name[MAX_DAQSIZE][CHAN_NAMELEN];
 // => final win of run won't be sorted, as these events will not leave window
 int insert_presort_win(Grif_event *ptr, int slot)
 {
-   int window_width = 200; // 2us - MAXIMUM (indiv. gates can be smaller)
+   int window_width = 500; // 5us to capture all pileup events - MAXIMUM (indiv. gates can be smaller)
    int win_count, win_end;
-   static int window_start;
    Grif_event *alt;
    long dt;
 
@@ -367,8 +343,8 @@ int insert_presort_win(Grif_event *ptr, int slot)
    */
 
    ///////////////// Presort window (used for suppression/addback)
-   while( window_start != slot ){ alt = &grif_event[window_start];
-      win_count = (slot - window_start+2*MAX_COINC_EVENTS) % MAX_COINC_EVENTS;
+   while( presort_window_start != slot ){ alt = &grif_event[presort_window_start];
+   win_count = (slot - presort_window_start+2*MAX_COINC_EVENTS) % MAX_COINC_EVENTS;
       dt = ptr->ts - alt->ts; if( dt < 0 ){ dt *= -1; }
 
       // should exit while-loop when no more events outside window
@@ -383,9 +359,9 @@ int insert_presort_win(Grif_event *ptr, int slot)
       //    ( either because dt > coincwidth OR due to error recovery)
       // NOTE event[slot] is out of window - use slot-1 as window-end
       if( (win_end = slot-1) < 0 ){ win_end = MAX_COINC_EVENTS-1; } // WRAP
-      pre_sort(window_start, win_end);
-      insert_sort_win(alt, window_start); // add event to next window
-      if( ++window_start >= MAX_COINC_EVENTS ){ window_start=0; } // WRAP
+      pre_sort(presort_window_start, win_end);
+      insert_sort_win(alt, presort_window_start); // add event to next window
+      if( ++presort_window_start >= MAX_COINC_EVENTS ){ presort_window_start=0; } // WRAP
    }
    return(0);
 }
@@ -395,7 +371,6 @@ int insert_sort_win(Grif_event *ptr, int slot)
 {
    int window_width = 200; // 2us - MAXIMUM (indiv. gates can be smaller)
    int win_count, win_end;
-   static int window_start;
    Grif_event *alt;
    long dt;
 
@@ -407,8 +382,8 @@ int insert_sort_win(Grif_event *ptr, int slot)
           i, window_start, slot-1,
           debug_show_ts(grif_event[window_start].ts) );
    */
-   while( window_start != slot ){ alt = &grif_event[window_start];
-      win_count = (slot - window_start+2*MAX_COINC_EVENTS) % MAX_COINC_EVENTS;
+   while( sort_window_start != slot ){ alt = &grif_event[sort_window_start];
+       win_count = (slot - sort_window_start+2*MAX_COINC_EVENTS) % MAX_COINC_EVENTS;
       dt = ptr->ts - alt->ts; if( dt < 0 ){ dt *= -1; }
 
       // should exit while-loop when no more events outside window
@@ -418,7 +393,7 @@ int insert_sort_win(Grif_event *ptr, int slot)
          if( win_count > coinc_events_cutoff ){ ++sortfull; } else {
             // now removed all events not in coinc with newly added fragment
             //   so can update coinc window counters with just-added frag
-            user_addto_window(window_start, slot);
+            user_addto_window(sort_window_start, slot);
             break;
          }
       }
@@ -428,10 +403,10 @@ int insert_sort_win(Grif_event *ptr, int slot)
       // NOTE event[slot] is out of window - use slot-1 as window-end
       if( (win_end = slot-1) < 0 ){ win_end = MAX_COINC_EVENTS-1; } // WRAP
       if( alt->chan != -1 ){ ++sorted;
-         default_sort(window_start, win_end, SORT_ONE);
+         default_sort(sort_window_start, win_end, SORT_ONE);
          //user_sort(window_start, win_end, SORT_ONE);
       } else { ++skipped; }
-      if( ++window_start >= MAX_COINC_EVENTS ){ window_start=0; } // WRAP
+      if( ++sort_window_start >= MAX_COINC_EVENTS ){ sort_window_start=0; } // WRAP
       ++grifevent_rdpos;  ++completed_events;
    }
    return(0);

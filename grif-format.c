@@ -10,12 +10,12 @@ void dbg_dump_event(unsigned *buf, int len){
 }
 void dbg_grifbuf(unsigned *evstrt, int reorder){
    if( reorder ){
-   printf("EVBUF[size:%d]: wrpos:%8d rdpos:%8d [%8d avail]\n",
+   printf("EVBUF[size:%d]: wrpos:%8ld rdpos:%8ld [%8ld avail]\n",
       EVENTBUFSIZE, eventbuf_wrpos%EVENTBUFSIZE, eventbuf_rdpos%EVENTBUFSIZE,
       eventbuf_wrpos-eventbuf_rdpos );
    printf("                                  evstart:%8ld\n", evstrt-event_buffer);
    } else {
-   printf("BANKBUF[size:%d]: wrpos:%8ld rdpos:%8ld [%8d avail]\n",
+   printf("BANKBUF[size:%d]: wrpos:%8ld rdpos:%8ld [%8ld avail]\n",
       BANK_BUFSIZE, bankbuf_wrpos%BANK_BUFSIZE, bankbuf_rdpos%BANK_BUFSIZE,
       bankbuf_wrpos-bankbuf_rdpos );
    printf("                                  evstart:%8ld\n", evstrt-bankbuf);
@@ -65,30 +65,22 @@ void grif_status(int current_time)
 
 void grif_main(Sort_status *arg)
 {
-   int i, wrpos, len, rd_avail, wr_avail, wcnt, wrap, reorder = arg->reorder;
+   int i, wrpos, len, rd_avail, wr_avail, wcnt, wrap;
    unsigned bufsize, *bufstart, *bufend, *evstart, *evptr;
    unsigned int usecs=100;
    Grif_event *ptr;
 
    memset(grif_err, 0, GRIF_ERR_TYPES*sizeof(int));
-   if( reorder ){
-      bufsize = EVENTBUFSIZE;
-      evptr = evstart = bufstart = event_buffer;
-      bufend = event_buffer + bufsize;
-   } else {
-      bufsize = BANK_BUFSIZE;
-      evptr = evstart = bufstart = bankbuf;
-      bufend = bankbuf + bufsize;
-   }
+   bufsize = EVENTBUFSIZE;
+   evptr = evstart = bufstart = event_buffer;
+   bufend = event_buffer + bufsize;
    grif_evcount = grifevent_wrpos = wrpos = wcnt = wrap = 0;
    printf("starting grif thread ...\n");
    while(1){ ptr = &grif_event[wrpos];
       // if( arg->shutdown_midas != 0 ){  break; }
-      rd_avail = ( reorder ) ? eventbuf_wrpos - eventbuf_rdpos :
-                                bankbuf_wrpos -  bankbuf_rdpos;
+      rd_avail =eventbuf_wrpos - eventbuf_rdpos;
       if( rd_avail < 10 ){  // leave some margin
-         if(  reorder && arg->reorder_out_done ||
-             !reorder && arg->end_of_data ){ break; }
+         if( arg->reorder_out_done ){ break; }
           usleep(usecs); continue;
       }
       if( (( (*evptr)>>28 )&0xf) != 0xE ){
@@ -117,21 +109,19 @@ void grif_main(Sort_status *arg)
          usleep(usecs);
       }
       if( unpack_grif3_event(evstart, len, ptr, waveforms) == 0 ){
-         if( !arg->sort_thread ){ process_event(ptr, wrpos); }
+         //if( !arg->sort_thread ){ process_event(ptr, wrpos); }
          //if( ( ++grif_evcount % 1000000) == 0 ){
          //   fprintf(stderr, "%10d events ...\n", grif_evcount);
          //}
-      }
+      } else { --grifevent_wrpos; } // dump this event
       if( ++evptr >= bufend ){ evptr -= bufsize; }
       ++wcnt; evstart = evptr;  ++grifevent_wrpos;
-      if(  reorder ){ eventbuf_rdpos += wcnt; // consume input data here
-      } else {              bankbuf_rdpos += wcnt; } //   or here
+      eventbuf_rdpos += wcnt; // consume input data here
       wcnt = 0;  wrpos = grifevent_wrpos %  MAX_COINC_EVENTS;  ++grif_evcount;
    }
    arg->grif_sort_done = 1;
    printf("grif_ordered thread finished rd:%ld wr:%ld\n",
-          ( reorder ) ? eventbuf_rdpos : bankbuf_rdpos,
-          ( reorder ) ? eventbuf_wrpos : bankbuf_wrpos );
+          eventbuf_rdpos, eventbuf_wrpos );
    return;
 }
 
@@ -183,22 +173,33 @@ int unpack_grif3_event(unsigned *evntbuf, int evlen, Grif_event *ptr, int proces
             //   grif_evcount, ptr->chan );
 	 }
 	 qtcount = 0;
-         ptr->dtype  = ((value & 0x0000F) >>  0);
+         ptr->dtype  = ((value & 0x000000F) >>  0);
 
          //if( ptr->dtype == 6 ){
 	 //   printf("DSC\n");
 	 //}
-
          ptr->address= ((value & 0xFFFF0) >>  4);
+	 // ptr->address >= 0x8000 - currently this will be caen data events
+	 //   which have had their address altered to allow reordering
+         //   now the address should be changed back to what it was
+         if( (unsigned)(ptr->address) >= 0x8000 ){
+	    extern int grifc_to_boardid[16];
+	    int board_id, grifc;
+	    grifc = (ptr->address >> 12 ) & 0xF;
+	    board_id = grifc_to_boardid[grifc];
+	    ptr->address = 0x8000 + (board_id * 0x100) + (ptr->address & 0xFF);
+	 }
+
+         // fprintf(stdout,"%d\n",ptr->address);
          ptr->chan = GetIDfromAddress(ptr->address);
-         ptr->ab_alt_chan = -1; // initialize as -1, used in addback
          if( ptr->dtype != 0xF && (ptr->chan < 0) ){
             ++grif_err[GRIF_ERR_ADDR];
             //if( ++errcount < 100 || (errcount % 1000 == 0) ){
-            //   fprintf(stderr,"Ignoring Event - Unknown address [0x%04x]\n", ptr->address);
+             fprintf(stderr,"Ignoring Event - Unknown address [0x%04x] returns chan %d\n", ptr->address, ptr->chan);
             //}
             return(-1);
          }
+         ptr->ab_alt_chan = -1; // initialize as -1, used in addback
          wave_ptr  = &ptr->waveform_length;     /* should be zero here */
          // if network count not present, next 2 words are [mstpat/ppg mstid]
          // (in filtered data)
@@ -331,5 +332,5 @@ int unpack_grif3_event(unsigned *evntbuf, int evlen, Grif_event *ptr, int proces
       default:  fprintf(stderr,"griffin_decode: default case\n"); return(-1);
       }
    }
-   return(0);
+   return( (ptr->dtype == 15) ); // return true if scalar, so they are discarded
 }

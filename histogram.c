@@ -1,4 +1,4 @@
-// small+simple replacement for root histograms
+//    small+simple replacement for root histograms
 //    Keep same code (add this pointers), style is useful when having mutiple
 //    histogram types/dimensions (otherwise clearer to convert to procedural)
 // file IO is separate from histogram access: analyser dumps files at endofrun
@@ -142,8 +142,13 @@ int TH1I_Reset(TH1I *this)
 
 int TH1I_Fill(TH1I *this, int xval, int count)
 {
-   float bin = (1.0*xval-this->xmin) * this->xbins/(1.0*this->xrange);
-   (this->entries)++;
+  float bin;
+  if(this->xmin != 0 || this->xbins != this->xrange){
+    bin = (1.0*xval-this->xmin) * this->xbins/(1.0*this->xrange);
+  }else{
+    bin = xval;
+  }
+//   (this->entries)++; // entries is not actually used for anything
    if( bin <            0 ){ (this->underflow)++; return(0); }
    if( bin >= this->xbins ){ (this-> overflow)++; return(0); }
    (this->data[(int)bin])+=count;
@@ -178,22 +183,22 @@ TH2I *H2_BOOK(Config *cfg, char *name, char *title, int xbins, int xmin, int xma
 	 MAX_HISTOGRAMS, name );
       return(NULL);
    }
-   if( ybins == 0 ){
+   if( ybins == SYMMETERIZE ){
      // This matrix will be symmetrized. Set the flag and the ybins to equal xbins.
      result->symm = 1; // Symmetric matrix
      result->type = INT_2D_SYMM;
-     ybins = xbins;
+     ybins = xbins; ymin = xmin; ymax = xmax;
    }else{
      result->symm = 0; // Non-symmetric matrix
      result->type = INT_2D;
    }
    // always allocate the data for sorting histograms
    // skip allocation for large histos read from disk (only read when needed)
-   if( xbins*ybins <= SMALL_HISTO_BINS ||
-       cfg == configs[0] || cfg == configs[1] ){
+   if( xbins*ybins <= SMALL_HISTO_BINS /* ||
+      cfg == configs[0] || cfg == configs[1]*/ ){
       if( (result->data = (int *)malloc(xbins*ybins*sizeof(int))) == NULL){
          fprintf(stderr,"H2_BOOK: data malloc failed\n");
-         free(result); return(NULL);
+         return(NULL);
       }
       memset(result->data, 0, xbins*ybins*sizeof(int) );
    } else {
@@ -201,6 +206,10 @@ TH2I *H2_BOOK(Config *cfg, char *name, char *title, int xbins, int xmin, int xma
    }
    if( (tlen=strlen(title)) >= TITLE_LENGTH  ){ tlen = TITLE_LENGTH-1; }
    if( (hlen=strlen(name))  >= HANDLE_LENGTH ){ hlen = HANDLE_LENGTH-1; }
+
+if(strncmp(title,"LBL-LBL_vs_TAC",14)==0){
+fprintf(stdout,"create %s\n",title);
+}
 
    memcpy(result->path, cfg->current_path, strlen(cfg->current_path)+1 );
    memcpy(result->handle, name, hlen+1);
@@ -230,7 +239,9 @@ TH2I *H2_BOOK(Config *cfg, char *name, char *title, int xbins, int xmin, int xma
 int TH2I_Reset(TH2I *this)
 {
   // fprintf(stdout,"Reset TH1I histogram, %s\n",this->title);
-   memset(this->data, 0, this->xbins*this->ybins*sizeof(int)); return(0);
+   if( this->data != NULL ){
+      memset(this->data, 0, this->xbins*this->ybins*sizeof(int));
+   } return(0);
    this->valid_bins    = this->xbins*this->ybins;
    this->underflow     = 0;
    this->overflow      = 0;
@@ -239,21 +250,39 @@ int TH2I_Reset(TH2I *this)
 
 int TH2I_Fill(TH2I *this, int xval, int yval, int count)
 {
-   float xbin = (1.0*xval-this->xmin) * this->xbins/(1.0*this->xrange);
-   float ybin = (1.0*yval-this->ymin) * this->ybins/(1.0*this->yrange);
-   (this->entries)++;
-   if( xbin <            0 ){ (this->underflow)++; return(0); }
-   if( xbin >= this->xbins ){ (this-> overflow)++; return(0); }
-   if( ybin <            0 ){ (this->underflow)++; return(0); }
-   if( ybin >= this->ybins ){ (this-> overflow)++; return(0); }
-   (this->data[(int)xbin + (int)(ybin)*this->xbins])+=count;
-   return(0);
+  float xbin, ybin;
+  if(this->xmin != 0 || this->xbins != this->xrange){
+    xbin = (1.0*xval-this->xmin) * this->xbins/(1.0*this->xrange);
+  }else{ xbin = xval; }
+  if(this->ymin != 0 || this->ybins != this->yrange){
+    ybin = (1.0*yval-this->ymin) * this->ybins/(1.0*this->yrange);
+  }else{ ybin = yval; }
+  if( xbin <            0 ){ (this->underflow)++; return(0); }
+  if( xbin >= this->xbins ){ (this-> overflow)++; return(0); }
+  if( ybin <            0 ){ (this->underflow)++; return(0); }
+  if( ybin >= this->ybins ){ (this-> overflow)++; return(0); }
+  if( this->data == NULL ){
+     if( (this->data=(int *)malloc(this->xbins*this->ybins*sizeof(int)))==NULL){
+        fprintf(stderr,"TH2I_Fill: data malloc failed for %s\n",this->handle);
+        return(-1);
+     }
+     memset(this->data, 0, this->xbins*this->ybins*sizeof(int) );
+  }
+  (this->data[(int)xbin + (int)(ybin)*this->xbins])+=count;
+  return(0);
 }
 
 int TH2I_SetBinContent(TH2I *this, int xbin, int ybin, int value)
 {
    if( xbin < 0 || xbin >= this->xbins ){ return(-1); }
    if( ybin < 0 || ybin >= this->ybins ){ return(-1); }
+   if( this->data == NULL ){
+      if( (this->data=(int *)malloc(this->xbins*this->ybins*sizeof(int)))==NULL){
+         fprintf(stderr,"TH2I_Fill: data malloc failed for %s\n",this->handle);
+         return(-1);
+      }
+      memset(this->data, 0, this->xbins*this->ybins*sizeof(int) );
+   }
    (this->data[xbin+ybin*this->xbins])=value; return(0);
 }
 
@@ -261,6 +290,7 @@ int TH2I_GetBinContent(TH2I *this, int xbin, int ybin)
 {
    if( xbin < 0 || xbin >= this->xbins ){ return(-1); }
    if( ybin < 0 || ybin >= this->ybins ){ return(-1); }
+   if( this->data == NULL ){ return(0); }
    return( (this->data[xbin+ybin*this->xbins]) );
 }
 
@@ -471,6 +501,7 @@ int read_histo_data(Histogram *histo, FILE *fp)
       fprintf(stderr,"read_histo_data: data malloc failed\n");
       return(-1);
    }
+   memset(histo->data, 0, bins*sizeof(int));
    if( fseek(fp, histo->file_data_offset, SEEK_SET) < 0 ){
       fprintf(stderr,"failed_seek histo:%s\n", histo->title );
       return(-1);
@@ -568,7 +599,7 @@ Config *read_histofile(char *filename, int config_only)
       if( ybins == 0 ){
          histo = (TH1I *)H1_BOOK(cfg, file_head.name,file_head.link,xbins,0,xbins);
       } else {
-        if(file_head.type[0] == 'C'){  ybins=0; } // set ybins to 0 for H2_BOOK to handle as symmetric
+        if(file_head.type[0] == 'C'){  ybins=SYMMETERIZE; } // set ybins to 0 for H2_BOOK to handle as symmetric
          histo = (TH1I *)H2_BOOK(cfg, file_head.name,file_head.link,xbins,0,xbins,ybins,0,ybins);
       }
       if( bins <= SMALL_HISTO_BINS ){
@@ -621,9 +652,11 @@ int write_th1I(FILE *fp, void *ptr)
 
    bins = (hist->type==INT_2D || hist->type==INT_2D_SYMM) ? hist->xbins*hist->ybins : hist->xbins;
    // check for empty (count non-zero at same time)
-   count = 0; for(i=0; i<bins; i++){
-      if( hist->data[i] != 0 ){
-         ++count; if( hist->type==INT_2D || hist->type==INT_2D_SYMM){ break; }
+   count = 0; if( hist->data != NULL ){
+      for(i=0; i<bins; i++){
+         if( hist->data[i] != 0 ){
+            ++count; if( hist->type==INT_2D || hist->type==INT_2D_SYMM){ break; }
+         }
       }
    }
    if( count == 0 ){ size=0; mode=0; }
@@ -657,7 +690,40 @@ int write_th1I(FILE *fp, void *ptr)
    return(0);
 }
 
-int sum_th1I(Config *dst_cfg, TH1I *dst, TH1I *src)
+int sum_th1I(Config *dst_cfg, Config *src_cfg, TH1I *src)
+{
+   int i, bins, ybins;
+   TH1I *dst;
+
+   if( (dst=find_histo(dst_cfg, src->handle)) == NULL ){
+      memcpy(dst_cfg->current_path, src->path, HISTO_FOLDER_LENGTH);
+      if( src->type == INT_1D ){
+         dst = H1_BOOK(dst_cfg, src->handle, src->title, src->xbins, src->xmin, src->xmax);
+      } else {
+        // Handle symmetrized and non-symmetrized matrices
+        if( src->symm == 1 ){
+          ybins = SYMMETERIZE;
+        }else{
+          ybins = src->ybins;
+        }
+         dst = (TH1I *)H2_BOOK(dst_cfg, src->handle, src->title, src->xbins, src->xmin, src->xmax, ybins, src->ymin, src->ymax);
+      }
+      if( dst == NULL ){ return(-1); }
+      if( dst->data == NULL ){
+         bins = (dst->ybins != 0) ? dst->xbins*dst->ybins : dst->xbins;
+         if( (dst->data = (int *)malloc(bins*sizeof(int))) == NULL){
+            fprintf(stderr,"sum_TH1I: data malloc failed\n");
+            return(-1);
+         }
+      }
+      memcpy(dst->data, src->data, dst->valid_bins*sizeof(int) );
+      return(0);
+   }
+   for(i=0; i<dst->valid_bins && i<src->valid_bins; i++){ dst->data[i] += src->data[i]; }
+   return(0);
+}
+
+int old_sum_th1I(Config *dst_cfg, TH1I *dst, TH1I *src)
 {
    int i, bins, ybins;
    if( dst == NULL ){
@@ -667,9 +733,9 @@ int sum_th1I(Config *dst_cfg, TH1I *dst, TH1I *src)
       } else {
         // Handle symmetrized and non-symmetrized matrices
         if( src->symm == 1 ){
-          ybins = 0;
+          ybins = SYMMETERIZE;
         }else{
-          ybins = src->xbins;
+          ybins = src->ybins;
         }
          dst = (TH1I *)H2_BOOK(dst_cfg, src->handle, src->title, src->xbins, src->xmin, src->xmax, ybins, src->ymin, src->ymax);
       }

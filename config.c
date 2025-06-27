@@ -146,6 +146,15 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
          fprintf(stderr,"bad arg:%s in gethistofileList\n", url_args[2]);
       }
    } else
+   if( strcmp(ptr, "getConfigfileList") == 0 ){ /* ----list configs---- */
+      if( strcmp(url_args[2], "dir") == 0 ){
+         send_configfile_list(url_args[3], fd);
+      } else {
+         sprintf(tmp,"bad argument:%s in getConfigfileList\n",url_args[2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"bad arg:%s in getConfigfileList\n", url_args[2]);
+      }
+   } else
    if( strcmp(ptr, "getSortStatus") == 0 ){ /* -----------------------*/
       send_sort_status(fd);
    } else
@@ -616,13 +625,16 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
       remove_histo(configs[0], url_args[3]);
    } else
    if( strcmp(ptr, "sumHistos") == 0 ){ /* -------------------- */
-      sum_histos(configs[0], narg, url_args, fd);
+      queue_sum_histos(configs[0], narg, url_args, fd);
    } else
    if( strcmp(ptr, "setCalibration") == 0 ){ /* -------------------- */
       set_calibration(configs[0], narg, url_args, fd);
    } else
    if( strcmp(ptr, "setPileupCorrection") == 0 ){ /* -------------------- */
       set_pileup_correction(configs[0], narg, url_args, fd);
+   } else
+   if( strcmp(ptr, "setCrosstalkCorrection") == 0 ){ /* -------------------- */
+      set_crosstalk_correction(configs[0], narg, url_args, fd);
    } else
    if( strcmp(ptr, "setDataDirectory") == 0 ){ /* -------------------- */
       send_header(fd, APP_JSON);
@@ -672,11 +684,21 @@ int handle_command(int fd, int narg, char url_args[][STRING_LEN])
          }
       }
       if( strcmp(url_args[2],"filename") == 0 ){
+         i = strlen(url_args[3]);
+         if( strncmp(url_args[3]+i-5, ".json", 5) == 0 ){
+            if( (cfg=add_config(url_args[3])) == NULL ){
+               fprintf(stderr,"viewConfig: cant create config:%s\n", url_args[3]);
+            }
+            if( load_config(cfg, url_args[3], NULL) != 0 ){
+               fprintf(stderr,"viewConfig: cant load config:%s\n", url_args[3]);
+            }
+         } else
          if( (cfg=read_histofile(url_args[3], 1)) == NULL ){
             send_http_error_response(fd, STATUS_CODE_404,(char*)"viewConfig can't read requested filename");
             fprintf(stderr,"viewConfig can't read requested filename, %s\n",url_args[3]);
            return(-1);
          }
+         // web_fp did not work under certain conditions (see below)
          sprintf(tmp,"/tmp/tmp.json");
          if( (tmp_fp = fopen(tmp,"w+")) == NULL ){ // create if needed, truncate to zero
             send_http_error_response(fd, STATUS_CODE_500,(char*)"viewConfig can't open tmp file to write");
@@ -791,16 +813,27 @@ int write_config(Config *cfg, FILE *fp)
    fprintf(fp,"      ]},\n");
    fprintf(fp,"      {\"Calibrations\" : [\n");
    for(i=0; i<cfg->ncal; i++){ calib = cfg->calib[i];
-      fprintf(fp,"%9s{\"name\" : \"%s\" , \"address\" : %d , \"datatype\" : %d , \"offset\" : %f , \"gain\" : %f , \"quad\" : %e ", "", calib->name, calib->address, calib->datatype, calib->offset, calib->gain, calib->quad );
-      if(calib->pileupk1[0] != -1 && !isnan(calib->pileupk1[0])){
-        fprintf(fp,", \"pileupk1\" : [ %f , %f , %e , %e , %e , %e , %e ]",calib->pileupk1[0],calib->pileupk1[1],calib->pileupk1[2],calib->pileupk1[3],calib->pileupk1[4],calib->pileupk1[5],calib->pileupk1[6]);
-        fprintf(fp,", \"pileupk2\" : [ %f , %f , %e , %e , %e , %e , %e ]",calib->pileupk2[0],calib->pileupk2[1],calib->pileupk2[2],calib->pileupk2[3],calib->pileupk2[4],calib->pileupk2[5],calib->pileupk2[6]);
-        fprintf(fp,", \"pileupE1\" : [ %f , %f , %e , %e , %e , %e , %e ]",calib->pileupE1[0],calib->pileupE1[1],calib->pileupE1[2],calib->pileupE1[3],calib->pileupE1[4],calib->pileupE1[5],calib->pileupE1[6]);
-      }else{
-        fprintf(fp,", \"pileupk1\" : [ %d , %d , %d , %d , %d , %d , %d ]",1,0,0,0,0,0,0);
-        fprintf(fp,", \"pileupk2\" : [ %d , %d , %d , %d , %d , %d , %d ]",1,0,0,0,0,0,0);
-        fprintf(fp,", \"pileupE1\" : [ %d , %d , %d , %d , %d , %d , %d ]",0,0,0,0,0,0,0);
-      }
+     fprintf(fp,"%9s{\"name\" : \"%s\" , \"address\" : %d , \"datatype\" : %d , \"offset\" : %f , \"gain\" : %f , \"quad\" : %e ", "", calib->name, calib->address, calib->datatype, calib->offset, calib->gain, calib->quad );
+     if(strncmp(calib->name,"GRG",3)==0){
+       if(calib->pileupk1[0] != -1){
+         fprintf(fp,", \"pileupk1\" : [ %f , %f , %e , %e , %e , %e , %e ]",calib->pileupk1[0],calib->pileupk1[1],calib->pileupk1[2],calib->pileupk1[3],calib->pileupk1[4],calib->pileupk1[5],calib->pileupk1[6]);
+         fprintf(fp,", \"pileupk2\" : [ %f , %f , %e , %e , %e , %e , %e ]",calib->pileupk2[0],calib->pileupk2[1],calib->pileupk2[2],calib->pileupk2[3],calib->pileupk2[4],calib->pileupk2[5],calib->pileupk2[6]);
+         fprintf(fp,", \"pileupE1\" : [ %f , %f , %e , %e , %e , %e , %e ]",calib->pileupE1[0],calib->pileupE1[1],calib->pileupE1[2],calib->pileupE1[3],calib->pileupE1[4],calib->pileupE1[5],calib->pileupE1[6]);
+       }else{
+         fprintf(fp,", \"pileupk1\" : [ %d , %d , %d , %d , %d , %d , %d ]",1,0,0,0,0,0,0);
+         fprintf(fp,", \"pileupk2\" : [ %d , %d , %d , %d , %d , %d , %d ]",1,0,0,0,0,0,0);
+         fprintf(fp,", \"pileupE1\" : [ %d , %d , %d , %d , %d , %d , %d ]",0,0,0,0,0,0,0);
+       }
+       if(calib->crosstalk0[0] != -1){
+         fprintf(fp,", \"crosstalk0\" : [ %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f ]",calib->crosstalk0[0],calib->crosstalk0[1],calib->crosstalk0[2],calib->crosstalk0[3],calib->crosstalk0[4],calib->crosstalk0[5],calib->crosstalk0[6],calib->crosstalk0[7],calib->crosstalk0[8],calib->crosstalk0[9],calib->crosstalk0[10],calib->crosstalk0[11],calib->crosstalk0[12],calib->crosstalk0[13],calib->crosstalk0[14],calib->crosstalk0[15]);
+         fprintf(fp,", \"crosstalk1\" : [ %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f ]",calib->crosstalk1[0],calib->crosstalk1[1],calib->crosstalk1[2],calib->crosstalk1[3],calib->crosstalk1[4],calib->crosstalk1[5],calib->crosstalk1[6],calib->crosstalk1[7],calib->crosstalk1[8],calib->crosstalk1[9],calib->crosstalk1[10],calib->crosstalk1[11],calib->crosstalk1[12],calib->crosstalk1[13],calib->crosstalk1[14],calib->crosstalk1[15]);
+         fprintf(fp,", \"crosstalk2\" : [ %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f , %f ]",calib->crosstalk2[0],calib->crosstalk2[1],calib->crosstalk2[2],calib->crosstalk2[3],calib->crosstalk2[4],calib->crosstalk2[5],calib->crosstalk2[6],calib->crosstalk2[7],calib->crosstalk2[8],calib->crosstalk2[9],calib->crosstalk2[10],calib->crosstalk2[11],calib->crosstalk2[12],calib->crosstalk2[13],calib->crosstalk2[14],calib->crosstalk2[15]);
+       }else{
+         fprintf(fp,", \"crosstalk0\" : [ %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d ]",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+         fprintf(fp,", \"crosstalk1\" : [ %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d ]",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+         fprintf(fp,", \"crosstalk2\" : [ %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d , %d ]",0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+       }
+     }
       fprintf(fp, "%s", ( i<cfg->ncal-1 ) ? "},\n" : "}\n" );
    }
    fprintf(fp,"      ]},\n");
@@ -835,6 +868,11 @@ int load_config(Config *cfg, char *filename, char *buffer)
    char *ptr, *name, *valstr, *title, *path, *var, *var2, op[8], tmp[80];
    float gain, offset, quad;
    float puk1[7], puk2[7], puE1[7];
+   float ct0[16], ct1[16], ct2[16];
+   // Initialize values to defaults
+   // Values of -1 are ignored by edit_calibration - use this for all channels that are not HPGe to avoid bloating the size of the config
+   float puk_reset[7]={1,0,0,0,0,0,0}, puE1_reset[7]={0,0,0,0,0,0,0}, pu_ignore[7]={-1,-1,-1,-1,-1,-1,-1};
+   float ct_reset[16]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}, ct_ignore[16]={-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
    Histogram *histo;
    Config *tmp_cfg;
    Cond *cond;
@@ -1160,7 +1198,7 @@ int load_config(Config *cfg, char *filename, char *buffer)
         return(-1);
       }
       // The pileup correction parameters were introduced in Feb 2025.
-      // Config files before this date will not have pileup correcitons, and after this they are optional
+      // Config files before this date will not have pileup corrections, and after this they are optional
       if( strncmp(ptr,"\"pileupk1\":",11) == 0 ){
         ptr += 11; valstr = ptr;
         if( sscanf(valstr, "[%f,%f,%e,%e,%e,%e,%e], ", &puk1[0],&puk1[1],&puk1[2],&puk1[3],&puk1[4],&puk1[5],&puk1[6]) != 7 ){
@@ -1176,7 +1214,6 @@ int load_config(Config *cfg, char *filename, char *buffer)
           fprintf(stderr,"load_config:errPUC byte %ld\n", ptr-config_data);
           return(-1);
         }
-        //while(isdigit(*ptr)||*ptr=='.'||*ptr=='-'||*ptr=='+'||*ptr=='e'||*ptr==','||*ptr=='['||*ptr==']'){++ptr;}
         while(*ptr!='\"'){++ptr;}
         if( strncmp(ptr,"\"pileupE1\":",11) != 0 ){
           fprintf(stderr,"load_config:errPUD byte %ld\n", ptr-config_data);
@@ -1186,17 +1223,55 @@ int load_config(Config *cfg, char *filename, char *buffer)
           fprintf(stderr,"load_config:errPUE byte %ld\n", ptr-config_data);
           return(-1);
         }
-        //while(isdigit(*ptr)||*ptr=='.'||*ptr=='-'||*ptr=='+'||*ptr=='e'||*ptr==','||*ptr=='['||*ptr==']'){++ptr;}
-        while(*ptr!='}'){++ptr;}
-        ++ptr;
+        while(*ptr!=']'){++ptr;}
+        ptr+=2;
+      }else if(strncmp(name,"GRG",3)==0){ // Only process pileup and crosstalk for HPGe
+           memcpy(puk1,puk_reset, 7 * sizeof(float));
+           memcpy(puk2,puk_reset, 7 * sizeof(float));
+           memcpy(puE1,puE1_reset, 7 * sizeof(float));
       }else{
-           // Initialize pileup parameters to default values
-           for(i=0; i<7; i++){
-             puk1[i] = puk2[i] = puE1[i] = 0;
-           }
-           puk1[0] = puk2[0] = 1; // set default factor as 1 not zero
+            memcpy(puk1,pu_ignore, 7 * sizeof(float));
+            memcpy(puk2,pu_ignore, 7 * sizeof(float));
+            memcpy(puE1,pu_ignore, 7 * sizeof(float));
       }
-      cfg->lock=1; edit_calibration(cfg,name,offset,gain,quad,puk1,puk2,puE1,address,type,1); cfg->lock=0;
+      // The crosstalk correction parameters were introduced in June 2025.
+      // Config files before this date will not have crosstalk corrections, and after this they are optional
+      if( strncmp(ptr,"\"crosstalk0\":",13) == 0 ){
+        ptr += 13; valstr = ptr;
+        if( sscanf(valstr, "[%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f], ", &ct0[0],&ct0[1],&ct0[2],&ct0[3],&ct0[4],&ct0[5],&ct0[6],&ct0[7],&ct0[8],&ct0[9],&ct0[10],&ct0[11],&ct0[12],&ct0[13],&ct0[14],&ct0[15]) != 16 ){
+          fprintf(stderr,"load_config:errCTA byte %ld\n", ptr-config_data);
+          return(-1);
+        }
+        while(*ptr!='\"'){++ptr;}
+        if( strncmp(ptr,"\"crosstalk1\":",13) != 0 ){
+          fprintf(stderr,"load_config:errCTB byte %ld\n", ptr-config_data);
+          return(-1);
+        } ptr += 13; valstr = ptr;
+        if( sscanf(valstr, "[%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f], ", &ct1[0],&ct1[1],&ct1[2],&ct1[3],&ct1[4],&ct1[5],&ct1[6],&ct1[7],&ct1[8],&ct1[9],&ct1[10],&ct1[11],&ct1[12],&ct1[13],&ct1[14],&ct1[15]) != 16 ){
+          fprintf(stderr,"load_config:errCTC byte %ld\n", ptr-config_data);
+          return(-1);
+        }
+        while(*ptr!='\"'){++ptr;}
+        if( strncmp(ptr,"\"crosstalk2\":",13) != 0 ){
+          fprintf(stderr,"load_config:errCTD byte %ld\n", ptr-config_data);
+          return(-1);
+        } ptr += 13; valstr = ptr;
+        if( sscanf(valstr, "[%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f]", &ct2[0],&ct2[1],&ct2[2],&ct2[3],&ct2[4],&ct2[5],&ct2[6],&ct2[7],&ct2[8],&ct2[9],&ct2[10],&ct2[11],&ct2[12],&ct2[13],&ct2[14],&ct2[15]) != 16 ){
+          fprintf(stderr,"load_config:errCTE byte %ld\n", ptr-config_data);
+          return(-1);
+        }
+        while(*ptr!=']'){++ptr;}
+        ptr+=2;
+      }else if(strncmp(name,"GRG",3)==0){ // Only process pileup and crosstalk for HPGe
+            memcpy(ct0,ct_reset, 16 * sizeof(float));
+            memcpy(ct1,ct_reset, 16 * sizeof(float));
+            memcpy(ct2,ct_reset, 16 * sizeof(float));
+      }else{
+            memcpy(ct0,ct_ignore, 16 * sizeof(float));
+            memcpy(ct1,ct_ignore, 16 * sizeof(float));
+            memcpy(ct2,ct_ignore, 16 * sizeof(float));
+      }
+      cfg->lock=1; edit_calibration(cfg,name,offset,gain,quad,puk1,puk2,puE1,ct0,ct1,ct2,address,type,1); cfg->lock=0;
       if( *ptr++ == ',' ){ continue; } // have skipped ']' if not
       ptr+=2; break; // skip '},'
     }
@@ -1305,18 +1380,19 @@ int clear_config(Config *cfg)
 int clear_calibrations(Config *cfg)
 {
   float offset=0, gain=1, quad=0;
-  float puk1[7], puk2[7], puE1[7];
   int i, address=-1, datatype=-1;
-
   // Initialize values to defaults
-  for(i=0; i<7; i++){
-    puk1[i] = puk2[i] = puE1[i] = 0;
-  }
-  puk1[0] = puk2[0] = 1; // set default factor as 1 not zero
+  // Values of -1 are ignored by edit_calibration - use this for all channels that are not HPGe to avoid bloating the size of the config
+  float puk_reset[7]={1,0,0,0,0,0,0}, puE1_reset[7]={0,0,0,0,0,0,0}, pu_ignore[7]={-1,-1,-1,-1,-1,-1,-1};
+  float ct_reset[16]={0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0}, ct_ignore[16]={-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1};
 
   // delete any calibration values
   for(i=0; i<cfg->ncal;     i++){
-    edit_calibration(cfg, cfg->calib[i]->name, offset, gain, quad, puk1, puk2, puE1, address, datatype, 1);
+    if(strncmp(cfg->calib[i]->name,"GRG",3)==0){
+      edit_calibration(cfg, cfg->calib[i]->name, offset, gain, quad, puk_reset, puk_reset, puE1_reset, ct_reset, ct_reset, ct_reset, address, datatype, 1);
+    }else{
+      edit_calibration(cfg, cfg->calib[i]->name, offset, gain, quad, pu_ignore, pu_ignore, pu_ignore, ct_ignore, ct_ignore, ct_ignore, address, datatype, 1);
+    }
   }
   return(0);
 }
@@ -1413,6 +1489,24 @@ int copy_config(Config *src, Config *dst)
    */
    //dst->odb_daqsize = src->odb_daqsize;
    src->lock = 0; return(0);
+}
+
+// needed to update calibrations during sort
+// dst is "sort" config, src is new stuff to merge
+int merge_configs(Config *src, Config *dst)
+{
+   Cal_coeff *cal;
+   Global *global;
+   int i;
+
+   dst->lock = 1;  src->lock = 1;
+   for(i=0; i<src->ncal;      i++){ cal = src->calib[i];
+      edit_calibration(dst, cal->name, cal->offset, cal->gain, cal->quad, cal->pileupk1, cal->pileupk2, cal->pileupE1, cal->crosstalk0, cal->crosstalk1, cal->crosstalk2, cal->address, cal->datatype, 1);
+   }
+   for(i=0; i<src->nglobal;   i++){ global = src->globals[i];
+      add_global(dst, global->name, global->min, global->max);
+   }
+   src->lock = 0; dst->lock = 0; return(0);
 }
 
 Config *add_config(char *name)
@@ -2026,12 +2120,16 @@ int set_calibration(Config *cfg, int num, char url_args[][STRING_LEN], int fd)
 {
    float offset, gain, quad;
    float puk1[7], puk2[7], puE1[7];
+   float ct0[16], ct1[16], ct2[16];
    int i, address=-1, datatype=-1;
    char tmp[128];
 
    // Initialize values to -1
    for(i=0; i<7; i++){
      puk1[i] = puk2[i] = puE1[i] = -1;
+   }
+   for(i=0; i<16; i++){
+     ct0[i]  = ct1[i]  = ct2[i]  = -1;
    }
 
    for(i=2; i<num; i+=8){
@@ -2093,7 +2191,10 @@ int set_calibration(Config *cfg, int num, char url_args[][STRING_LEN], int fd)
 //         fprintf(stderr,"can't read datatype: %s\n", url_args[i+11]);
 //         return(-1);
 //      }
-      edit_calibration(cfg, url_args[i+1], offset, gain, quad, puk1, puk2, puE1,
+      // Send the response header
+      send_header(fd, APP_JSON);
+
+      edit_calibration(cfg, url_args[i+1], offset, gain, quad, puk1, puk2, puE1, ct0, ct1, ct2,
                        address, datatype, 1);
    }
    return(0);
@@ -2103,6 +2204,7 @@ int set_pileup_correction(Config *cfg, int num, char url_args[][STRING_LEN], int
 {
    float offset=-1, gain=-1, quad=-1;
    float puk1[7], puk2[7], puE1[7];
+   float ct0[16], ct1[16], ct2[16];
    int i, address=-1, datatype=-1;
    char tmp[128];
 
@@ -2111,6 +2213,9 @@ for(i=0; i<7; i++){
   puk1[i] = puk2[i] = puE1[i] = 0;
 }
 puk1[0] = puk2[0] = 1; // set default factor as 1 not zero
+for(i=0; i<16; i++){
+  ct0[i]  = ct1[i]  = ct2[i]  = -1;
+}
 
    for(i=2; i<num; i+=8){
       if( strncmp(url_args[i], "channelName", 10) != 0 ){
@@ -2171,30 +2276,125 @@ puk1[0] = puk2[0] = 1; // set default factor as 1 not zero
 //         fprintf(stderr,"can't read datatype: %s\n", url_args[i+17]);
 //         return(-1);
 //      }
-    edit_calibration(cfg, url_args[i+1], offset, gain, quad, puk1, puk2, puE1, address, datatype, 1);
+      // Send the response header
+      send_header(fd, APP_JSON);
+
+    edit_calibration(cfg, url_args[i+1], offset, gain, quad, puk1, puk2, puE1, ct0, ct1, ct2, address, datatype, 1);
    }
    return(0);
 }
 
-int edit_calibration(Config *cfg, char *name, float offset, float gain, float quad, float puk1[7], float puk2[7], float puE1[7], int address, int type, int overwrite)
+int set_crosstalk_correction(Config *cfg, int num, char url_args[][STRING_LEN], int fd)
+{
+   float offset=-1, gain=-1, quad=-1;
+   float puk1[7], puk2[7], puE1[7];
+   float ct0[16], ct1[16], ct2[16];
+   int i, address=-1, datatype=-1;
+   char tmp[128];
+
+// Initialize values to defaults
+for(i=0; i<7; i++){
+  puk1[i] = puk2[i] = puE1[i] = -1;
+}
+for(i=0; i<16; i++){
+  ct0[i]  = ct1[i]  = ct2[i]  = 0;
+}
+
+   for(i=2; i<num; i+=8){
+      if( strncmp(url_args[i], "channelName", 10) != 0 ){
+         sprintf(tmp,"set_crosstalk_correction: expected \"channelName\" at %s\n",url_args[i]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"expected \"channelName\" at %s\n", url_args[i]);
+         return(-1);
+      }
+      if( strncmp(url_args[i+2], "crosstalk0", 8) != 0 ){
+         sprintf(tmp,"set_crosstalk_correction: expected \"crosstalk0\" at %s\n",url_args[i+2]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"expected \"crosstalk0\" at %s\n", url_args[i+2]);
+         return(-1);
+      }
+      if( sscanf(url_args[i+3], "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f", ct0,ct0+1,ct0+2,ct0+3,ct0+4,ct0+5,ct0+6,ct0+7,ct0+8,ct0+9,ct0+10,ct0+11,ct0+12,ct0+13,ct0+14,ct0+15) != 16 ){
+         sprintf(tmp,"set_crosstalk_correction: can't read crosstalk k1 value (expected 7 values), %s\n",url_args[i+3]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"can't read crosstalk k1, expected 16 values: %s\n", url_args[i+3]);
+         return(-1);
+      }
+      if( strncmp(url_args[i+4], "crosstalk1", 8) != 0 ){
+         sprintf(tmp,"set_crosstalk_correction: expected \"crosstalk1\" at %s\n",url_args[i+4]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"expected \"crosstalk1\" at %s\n", url_args[i+4]);
+         return(-1);
+      }
+      if( sscanf(url_args[i+5], "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f", ct1,ct1+1,ct1+2,ct1+3,ct1+4,ct1+5,ct1+6,ct1+7,ct1+8,ct1+9,ct1+10,ct1+11,ct1+12,ct1+13,ct1+14,ct1+15) != 16 ){
+         sprintf(tmp,"set_crosstalk_correction: can't read pileup k2 value (expected 7 values), %s\n",url_args[i+5]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"can't read pileup k2, expected 16 values: %s\n", url_args[i+5]);
+         return(-1);
+      }
+      if( strncmp(url_args[i+6], "crosstalk2", 8) != 0 ){
+         sprintf(tmp,"set_crosstalk_correction: expected \"crosstalk2\" at %s\n",url_args[i+6]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"expected \"crosstalk2\" at %s\n", url_args[i+6]);
+         return(-1);
+      }
+      if( sscanf(url_args[i+7], "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f", ct2,ct2+1,ct2+2,ct2+3,ct2+4,ct2+5,ct2+6,ct2+7,ct2+8,ct2+9,ct2+10,ct2+11,ct2+12,ct2+13,ct2+14,ct2+15) != 16 ){
+         sprintf(tmp,"set_crosstalk_correction: can't read pileup E1 value (expected 7 values), %s\n",url_args[i+7]);
+         send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
+         fprintf(stderr,"can't read pileup E1, expected 16 values: %s\n", url_args[i+7]);
+         return(-1);
+      }
+//      if( strncmp(url_args[i+14], "address", 4) != 0 ){
+//         fprintf(stderr,"expected \"address\" at %s\n", url_args[i+14]);
+//         return(-1);
+//      }
+//      if( sscanf(url_args[i+15], "%d", &address) < 1 ){
+//         fprintf(stderr,"can't read address: %s\n", url_args[i+15]);
+//         return(-1);
+//      }
+//      if( strncmp(url_args[i+16], "datatype", 6) != 0 ){
+//         fprintf(stderr,"expected \"datatype\" at %s\n", url_args[i+16]);
+//         return(-1);
+//      }
+//      if( sscanf(url_args[i+17], "%d", &datatype) < 1 ){
+//         fprintf(stderr,"can't read datatype: %s\n", url_args[i+17]);
+//         return(-1);
+//      }
+      // Send the response header
+      send_header(fd, APP_JSON);
+
+    edit_calibration(cfg, url_args[i+1], offset, gain, quad, puk1, puk2, puE1, ct0, ct1, ct2, address, datatype, 1);
+   }
+   return(0);
+}
+
+int edit_calibration(Config *cfg, char *name, float offset, float gain, float quad, float puk1[7], float puk2[7], float puE1[7], float ct0[16], float ct1[16], float ct2[16], int address, int type, int overwrite)
 {
    time_t current_time = time(NULL);
    int i,j, len, arg;
    Cal_coeff *cal;
-
+/*
+if(strcmp(name,"GRG01WN00A")==0){
+  fprintf(stdout,"edit_calibration for %s:\n",name);// debugger breakpoint
+}
+*/
    for(i=0; i<cfg->ncal; i++){ cal = cfg->calib[i];
       if( strncmp(name, cfg->calib[i]->name, strlen(name)) == 0 &&
           strlen(name) == strlen(cfg->calib[i]->name)       ){ break; }
    }
    if( i < cfg->ncal ){ // calib already exists
-      if( overwrite ){
-      if( offset != -1 ){ cal->offset = offset; }
-      if( gain   != -1 ){ cal->gain = gain; }
-      if( quad   != -1 ){ cal->quad = quad; }
-      if( puk1[0] != -1 ){ for(j=0; j<7; j++){cal->pileupk1[j] = puk1[j];} }
-      if( puk2[0] != -1 ){ for(j=0; j<7; j++){cal->pileupk2[j] = puk2[j];} }
-      if( puE1[0] != -1 ){ for(j=0; j<7; j++){cal->pileupE1[j] = puE1[j];} }
-      }
+     if( overwrite ){
+       if( offset != -1 ){ cal->offset = offset; }
+       if( gain   != -1 ){ cal->gain = gain; }
+       if( quad   != -1 ){ cal->quad = quad; }
+       if(strncmp(name,"GRG",3)==0){ // Only process pileup and crosstalk for HPGe
+         if( puk1[0] != -1 ){ for(j=0; j<7; j++){cal->pileupk1[j] = puk1[j];} }
+         if( puk2[0] != -1 ){ for(j=0; j<7; j++){cal->pileupk2[j] = puk2[j];} }
+         if( puE1[0] != -1 ){ for(j=0; j<7; j++){cal->pileupE1[j] = puE1[j];} }
+         if( ct0[0] != -1 ){ for(j=0; j<16; j++){cal->crosstalk0[j] = ct0[j];} }
+         if( ct1[0] != -1 ){ for(j=0; j<16; j++){cal->crosstalk1[j] = ct1[j];} }
+         if( ct2[0] != -1 ){ for(j=0; j<16; j++){cal->crosstalk2[j] = ct2[j];} }
+       }
+     }
       if( address != -1 ){
          cal->address = address;  cal->datatype = type;
       }
@@ -2211,24 +2411,53 @@ int edit_calibration(Config *cfg, char *name, float offset, float gain, float qu
       if( offset != -1 ){ cal->offset = offset; }else{ cal->offset = 0; }
       if( gain   != -1 ){ cal->gain = gain; }else{ cal->gain = 1; }
       if( quad   != -1 ){ cal->quad = quad; }else{ cal->quad = 0; }
-      if( puk1[0] != -1 ){
-        for(j=0; j<7; j++){ cal->pileupk1[j] = puk1[j]; }
-      }else{
-        cal->pileupk1[0]=1; cal->pileupk1[1]=0; cal->pileupk1[2]=0; cal->pileupk1[3]=0; cal->pileupk1[4]=0; cal->pileupk1[5]=0; cal->pileupk1[6]=0;
-      }
-      if( puk2[0] != -1 ){
-        for(j=0; j<7; j++){cal->pileupk2[j] = puk2[j]; }
-      }else{
-        cal->pileupk2[0]=1; cal->pileupk2[1]=0; cal->pileupk2[2]=0; cal->pileupk2[3]=0; cal->pileupk2[4]=0; cal->pileupk2[5]=0; cal->pileupk2[6]=0;
-      }
-      if( puE1[0] != -1 ){
-        for(j=0; j<7; j++){cal->pileupE1[j] = puE1[j]; }
-      }else{
-        cal->pileupE1[0]=0; cal->pileupE1[1]=0; cal->pileupE1[2]=0; cal->pileupE1[3]=0; cal->pileupE1[4]=0; cal->pileupE1[5]=0; cal->pileupE1[6]=0;
+      if(strncmp(name,"GRG",3)==0){ // Only process pileup and crosstalk for HPGe
+        if( puk1[0] != -1 ){
+          for(j=0; j<7; j++){ cal->pileupk1[j] = puk1[j]; }
+        }else{
+          cal->pileupk1[0]=1; cal->pileupk1[1]=0; cal->pileupk1[2]=0; cal->pileupk1[3]=0; cal->pileupk1[4]=0; cal->pileupk1[5]=0; cal->pileupk1[6]=0;
+        }
+        if( puk2[0] != -1 ){
+          for(j=0; j<7; j++){cal->pileupk2[j] = puk2[j]; }
+        }else{
+          cal->pileupk2[0]=1; cal->pileupk2[1]=0; cal->pileupk2[2]=0; cal->pileupk2[3]=0; cal->pileupk2[4]=0; cal->pileupk2[5]=0; cal->pileupk2[6]=0;
+        }
+        if( puE1[0] != -1 ){
+          for(j=0; j<7; j++){cal->pileupE1[j] = puE1[j]; }
+        }else{
+          cal->pileupE1[0]=0; cal->pileupE1[1]=0; cal->pileupE1[2]=0; cal->pileupE1[3]=0; cal->pileupE1[4]=0; cal->pileupE1[5]=0; cal->pileupE1[6]=0;
+        }
+        if( ct0[0] != -1 ){
+          for(j=0; j<16; j++){ cal->crosstalk0[j] = ct0[j]; }
+        }else{
+          cal->crosstalk0[0]=0; cal->crosstalk0[1]=0; cal->crosstalk0[2]=0; cal->crosstalk0[3]=0; cal->crosstalk0[4]=0; cal->crosstalk0[5]=0; cal->crosstalk0[6]=0; cal->crosstalk0[7]=0;
+          cal->crosstalk0[8]=0; cal->crosstalk0[9]=0; cal->crosstalk0[10]=0; cal->crosstalk0[11]=0; cal->crosstalk0[12]=0; cal->crosstalk0[13]=0; cal->crosstalk0[14]=0; cal->crosstalk0[15]=0;
+        }
+        if( ct1[0] != -1 ){
+          for(j=0; j<16; j++){ cal->crosstalk1[j] = ct1[j]; }
+        }else{
+          cal->crosstalk1[0]=0; cal->crosstalk1[1]=0; cal->crosstalk1[2]=0; cal->crosstalk1[3]=0; cal->crosstalk1[4]=0; cal->crosstalk1[5]=0; cal->crosstalk1[6]=0; cal->crosstalk1[7]=0;
+          cal->crosstalk1[8]=0; cal->crosstalk1[9]=0; cal->crosstalk1[10]=0; cal->crosstalk1[11]=0; cal->crosstalk1[12]=0; cal->crosstalk1[13]=0; cal->crosstalk1[14]=0; cal->crosstalk1[15]=0;
+        }
+        if( ct2[0] != -1 ){
+          for(j=0; j<16; j++){ cal->crosstalk2[j] = ct2[j]; }
+        }else{
+          cal->crosstalk2[0]=0; cal->crosstalk2[1]=0; cal->crosstalk2[2]=0; cal->crosstalk2[3]=0; cal->crosstalk2[4]=0; cal->crosstalk2[5]=0; cal->crosstalk2[6]=0; cal->crosstalk2[7]=0;
+          cal->crosstalk2[8]=0; cal->crosstalk2[9]=0; cal->crosstalk2[10]=0; cal->crosstalk2[11]=0; cal->crosstalk2[12]=0; cal->crosstalk2[13]=0; cal->crosstalk2[14]=0; cal->crosstalk2[15]=0;
+        }
       }
       cal->address = address;  cal->datatype = type;
     }
    cfg->mtime = current_time;  save_config(cfg, DEFAULT_CONFIG, 1);
+
+/*
+   if(strcmp(name,"GRG01WN00A")==0){
+   fprintf(stdout,"ct0: [%f,%f,%f,%f,%f,%f,%f]\n",cal->crosstalk0[0],cal->crosstalk0[1],cal->crosstalk0[2],cal->crosstalk0[3],cal->crosstalk0[4],cal->crosstalk0[5],cal->crosstalk0[6]);
+   fprintf(stdout,"ct1: [%f,%f,%f,%f,%f,%f,%f]\n",cal->crosstalk1[0],cal->crosstalk1[1],cal->crosstalk1[2],cal->crosstalk1[3],cal->crosstalk1[4],cal->crosstalk1[5],cal->crosstalk1[6]);
+   fprintf(stdout,"ct2: [%f,%f,%f,%f,%f,%f,%f]\n",cal->crosstalk2[0],cal->crosstalk2[1],cal->crosstalk2[2],cal->crosstalk2[3],cal->crosstalk2[4],cal->crosstalk2[5],cal->crosstalk2[6]);
+}
+*/
+
    return(0);
 }
 
@@ -2260,13 +2489,22 @@ int set_midas_param(Config *cfg, char *name, char *value)
 {
    time_t current_time = time(NULL);
    int len;
+   char clean_string[128], *tmp;
 
    if( (len=strlen(value)) >= SYS_PATH_LENGTH ){
       fprintf(stderr,"set_midas_param: value too long[%s]\n", value);
       return(-1);
    }
    if(        strncmp(name, "Title",   5) == 0 ){
-      memcpy(cfg->midas_title, value, len+1);
+      sprintf(clean_string, "%s", value);
+      if( (tmp = strstr(clean_string, "\t"))>0 ){ // This illegal character cannot be handled in the browser
+        while( (tmp = strstr(clean_string, "\t"))>0 ){
+          strncpy(tmp, " ", 1); // keep the length the same, and make use of the terminating character already in clean_string
+        }
+        memcpy(cfg->midas_title, clean_string, len+1);
+      }else{
+        memcpy(cfg->midas_title, value, len+1);
+      }
    } else if( strncmp(name, "StartTime",  9) == 0 ){
       if( sscanf(value, "%d", &cfg->midas_start_time) < 1 ){
          fprintf(stderr,"set_midas_param: can't read starttime: %s\n", value);
@@ -2284,53 +2522,111 @@ int set_midas_param(Config *cfg, char *name, char *value)
 }
 
 ///////////////////////////// MISC SCRIPTS ETC ////////////////////////////
-extern int sum_th1I(Config *dst_cfg, TH1I *dst, TH1I *src);
-int sum_histos(Config *cfg, int num, char url_args[][STRING_LEN], int fd)
+static Sortfile filelist[FILE_QLEN];
+extern int sum_th1I(Config *dst_cfg, Config *src_cfg, TH1I *src);
+int queue_sum_histos(Config *cfg, int num, char url_args[][STRING_LEN], int fd)
 {
-   Config *sum, *tmp, *tmp_conf;
-   int i, j, arg;
+   int i, j, len, next, narg;
+   Sort_status *arg;
+   Sortfile *sort;
    FILE *fp;
+   char tmp[128];
 
    if( strncmp(url_args[2], "outputfilename", 14) != 0 ){
+      sprintf(tmp,"Sum histos: expected \"outputfilename\" at %s\n",url_args[2]);
+      send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
       fprintf(stderr,"expected \"outputfilename\" at %s\n", url_args[2]);
       return(-1);
    }
    if( (fp=fopen(url_args[3],"r")) != NULL ){
+      sprintf(tmp,"Sum histos: %s already exists NOT OVERWRITING. Histos will not be summed.\n",url_args[3]);
+      send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
       fprintf(stderr,"%s already exists NOT OVERWRITING\n", url_args[3]);
       return(-1);
    }
    if( (fp=fopen(url_args[3],"w")) == NULL ){
+      sprintf(tmp,"Sum histos: can't open %s to write\n",url_args[3]);
+      send_http_error_response(fd, STATUS_CODE_400,(char*)tmp);
       fprintf(stderr,"can't open %s to write\n", url_args[3]);
       return(-1);
    }
-   if( (sum=add_config(url_args[3])) == NULL ){ return(-1); }
+   fclose(fp);
+
+      // Send the response header
+      send_header(fd, APP_JSON);
+
+   arg = get_sort_status();
+   sort = &filelist[arg->final_filenum]; next = arg->final_filenum + 1;
+   if( next >= FILE_QLEN ){ next = 0; }
+   if( next == arg->current_filenum ){
+      fprintf(stderr,"FILE QUEUE FULL"); return(-1);
+   }
+   sort->narg = num/2 - 1;
+   if( (sort->arg = calloc(sort->narg, sizeof(char *))) == NULL ){
+      fprintf(stderr,"sum_histos: can't alloc memory for histo-list\n");
+      return(-1);
+   }
+   if( (sort->arg[0] = malloc( strlen(url_args[3])+1 )) == NULL){
+      fprintf(stderr,"sum_histos: can't alloc memory for histo-list\n");
+      free_sortfile(sort); return(-1);
+   }
+   memcpy(sort->arg[0], url_args[3], strlen(url_args[3])+1);
    for(i=4; i<num; i+=2){
       if( strncmp(url_args[i], "filename", 8) != 0 ){
          fprintf(stderr,"expected \"filename\" at %s\n", url_args[i]);
-         return(-1);
+         free_sortfile(sort); return(-1);
       }
-      if( i == 4 ){
-         tmp_conf=read_histofile(url_args[5], 1); copy_config(tmp_conf, sum);
+      if( (fp=fopen(url_args[i+1],"r")) == NULL ){
+         fprintf(stderr,"cant open histofile:%s to read\n", url_args[i+1]);
+      }
+      j = (i-2)/2; len = strlen(url_args[i+1])+1;
+      if( (sort->arg[j] = malloc(len)) == NULL){
+         fprintf(stderr,"sum_histos: can't alloc memory for histo-list\n");
+         free_sortfile(sort); return(-1);
+      }
+      memcpy(sort->arg[j], url_args[i+1], len);
+   }
+   if( ++arg->final_filenum == FILE_QLEN ){ arg->final_filenum = 0; } //wrap
+   return(0);
+}
+
+int sum_histos(Config *cfg, Sortfile *sort)  // cfg -> configs[0]
+{
+   Config *sum, *tmp, *tmp_conf;
+   int i, j, arg;
+   FILE *fp;
+   if( sort->narg < 2 || sort->arg == NULL ){
+      fprintf(stderr,"sum_histos: bad args\n"); return(-1);
+   }
+   if( (fp=fopen(sort->arg[0],"w")) == NULL ){
+      fprintf(stderr,"can't open %s to write\n", sort->arg[0]);
+      return(-1);
+   }
+   if( (sum=add_config(sort->arg[0])) == NULL ){ return(-1); }
+   for(i=1; i<sort->narg; i++){ sort->carg = i;
+      if( i == 1 ){
+         tmp_conf=read_histofile(sort->arg[1], 1); copy_config(tmp_conf, sum);
          remove_config(tmp_conf);
       }
-      if( (tmp = read_histofile(url_args[i+1],0)) == NULL ){ continue; }
-      fprintf(stderr,"Adding histograms from %s ...\n", url_args[i+1]);
+      if( (tmp = read_histofile(sort->arg[i],0)) == NULL ){ continue; }
+      fprintf(stderr,"Adding histograms from %s ...\n", sort->arg[i]);
       for(j=0; j<tmp->nhistos; j++){
          if( tmp->histo_list[j]->data == NULL ){
             read_histo_data(tmp->histo_list[j], tmp->histo_fp );
             if( tmp->histo_list[j]->data == NULL ){
                fprintf(stderr, "sum_histos:cant alloc data for %s:%s\n",
-                       url_args[i+1], tmp->histo_list[j]->handle );
+                       sort->arg[i], tmp->histo_list[j]->handle );
                return(-1);
             }
-            sum_th1I(sum,(TH1I *)sum->histo_list[j],(TH1I *)tmp->histo_list[j]);
+            sum_th1I(sum, tmp, tmp->histo_list[j] );
             free(tmp->histo_list[j]->data); tmp->histo_list[j]->data = NULL;
          } else {
-            sum_th1I(sum,(TH1I *)sum->histo_list[j],(TH1I *)tmp->histo_list[j]);
+            //sum_th1I(sum,(TH1I *)sum->histo_list[j],(TH1I *)tmp->histo_list[j]);
+            sum_th1I(sum, tmp, tmp->histo_list[j] );
          }
       }
-      if( i != 4 ){ // update start time and duration for subsequent files
-         tmp_conf=read_histofile(url_args[i+1], 1);
+      if( i != 1 ){ // update start time and duration for subsequent files
+         tmp_conf=read_histofile(sort->arg[i], 1);
          if( tmp_conf->midas_start_time < sum->midas_start_time ){
             sum->midas_start_time = tmp_conf->midas_start_time;
          }
@@ -2386,7 +2682,6 @@ void unload_midas_module()
    dlclose(midas_module_handle); midas_module_handle = NULL;
 }
 
-static Sortfile filelist[FILE_QLEN];
 static struct stat statbuf;
 int send_sort_status(int fd)
 {
@@ -2409,6 +2704,13 @@ int send_sort_status(int fd)
    }
    if( arg->final_filenum == arg->current_filenum ){
       sprintf(tmpstr,"IDLE %d", configs[0]->mtime);
+      put_line(fd, tmpstr, strlen(tmpstr) );
+      return(0);
+   }
+   if( arg->sum_mode == 1 ){
+      i = arg->current_filenum; tmp = &filelist[i];
+      sprintf(tmpstr,"SUMMING HISTOS %d %d %d", configs[0]->mtime,
+                                        tmp->carg-1, tmp->narg-1);
       put_line(fd, tmpstr, strlen(tmpstr) );
       return(0);
    }
@@ -2496,7 +2798,7 @@ int run_number(Sort_status *arg, Sortfile *sort, char *name);
 char *subrun_filename(Sortfile *sort, int subrun);
 int add_sortfile(char *path, char *histodir, char *confdir, char *calsrc)
 {
-   int i, plen, dlen, ext_len, hlen, clen;
+   int i, next, plen, dlen, ext_len, hlen, clen;
    char ptr, tmp[256], *fname;
    Sort_status *arg, tmp_stat;
    Config *cfg = configs[0];
@@ -2510,8 +2812,9 @@ int add_sortfile(char *path, char *histodir, char *confdir, char *calsrc)
       return(0);
    }
    memset(&tmp_stat, 0, sizeof(Sort_status) );
-   sort = &filelist[arg->final_filenum];
-   if( arg->final_filenum + 1 == arg->current_filenum ){
+   sort = &filelist[arg->final_filenum]; next = arg->final_filenum + 1;
+   if( next >= FILE_QLEN ){ next = 0; }
+   if( next == arg->current_filenum ){
       fprintf(stderr,"FILE QUEUE FULL"); return(-1);
    }
    plen=strlen(path);
@@ -2535,6 +2838,11 @@ int add_sortfile(char *path, char *histodir, char *confdir, char *calsrc)
    memcpy((char *)sort->data_name, path+dlen, plen-dlen);
    *(sort->data_name+plen-dlen) = 0;
    if( run_number(&tmp_stat, sort, sort->data_name) ){ return(-1); }
+   most_recent_calib_file(sort->data_dir, sort->run, sort->recent_cal);
+    if( strlen(sort->recent_cal) == 0 && strcmp(calsrc,"file") == 0 ){
+       fprintf(stdout,"No recent calib file found. Switching to ODB parameters from this .mid file instead.\n");
+       sprintf(calsrc,"midas");
+    }
    memset(&statbuf, 0, sizeof(struct stat)); sort->data_size = 0;
    if( sort->subrun != -1 ){ // just single subrun
       fname = subrun_filename(sort, sort->subrun);
@@ -2618,8 +2926,15 @@ int add_sortfile(char *path, char *histodir, char *confdir, char *calsrc)
 int open_next_sortfiles(Sort_status *arg)
 {
    Sortfile *sort = &filelist[arg->current_filenum];
+   Config *tmp_cfg;
    char ptr, tmp[256];
    if( arg->online_mode ){ return(0); } // no files in this mode
+
+   if( sort->data_name == NULL ){ // this is a histogram summing command
+      arg->sum_mode = 1;
+      sum_histos(configs[0], sort); return(1); // return non-zero => dont try to sort
+   } else { arg->sum_mode = 0; }
+
    if( sort->histo_dir == NULL ){
       sprintf(tmp, "%s/%s", sort->data_dir, sort->histo_name);
    } else {
@@ -2650,11 +2965,38 @@ int open_next_sortfiles(Sort_status *arg)
       fprintf(stderr,"can't open %s to read\n", tmp);  return(-1);
    }
    fprintf(stdout,"sorting file %d %s\n", arg->current_filenum, tmp);
+   if( strcmp(sort->cal_src, "file") == 0 ){
+      // first subrun - open cal file or most recent
+      memcpy(tmp+strlen(tmp)-8, ".json", 6);
+      if( (arg->cal_fp=fopen(tmp,"r")) == NULL ){
+         fprintf(stdout,"No BOR calib file - ");
+         sprintf(tmp, "%s/%s", sort->data_dir, sort->recent_cal);
+         if( strlen(sort->recent_cal) != 0 && (arg->cal_fp=fopen(tmp,"r")) != NULL ){
+            fprintf(stdout,"using most recent: %s\n", sort->recent_cal);
+         } else {
+            fprintf(stdout,"No recent calib file found either. Switching to ODB parameters from this .mid file instead.\n");
+         }
+       }
+       if( arg->cal_fp != NULL ){ fclose(arg->cal_fp);
+         if( (tmp_cfg=add_config(tmp)) != NULL ){
+           if( load_config(tmp_cfg, tmp, NULL) == 0 ){
+             merge_configs(tmp_cfg, configs[1]);
+           } else {
+             fprintf(stderr,"open sortfiles: cant load config:%s\nSwitching to ODB parameters from this .mid file instead.\n", tmp);
+             sprintf(sort->cal_src,"midas");
+           }
+           remove_config(tmp_cfg);
+         } else {
+           fprintf(stderr,"open sortfiles: cant create config:%s\nSwitching to ODB parameters from this .mid file instead.\n", tmp);
+           sprintf(sort->cal_src,"midas");
+         }
+       }
+     }
    arg->midas_bytes = 0;
-   if( strcmp(sort->cal_src, "config") == 0 ){
-      arg->cal_overwrite = 0; // cal src == "config"
-   } else {
+   if( strcmp(sort->cal_src, "midas") == 0 ){
       arg->cal_overwrite = 1;
+   } else {
+      arg->cal_overwrite = 0;  // cal src == "config" or "file"
    }
    return(0);
 }
@@ -2689,7 +3031,7 @@ char *subrun_filename(Sortfile *sort, int subrun)
 
    sprintf(tmp,"%d", sort->run); digits = strlen(tmp);
    len = strlen(name);
-   while( digits++ < sort->run_digits ){ name[len] = '0'; name[1+len++] = 0; }
+   while( digits++ < sort->run_digits ){ name[len] = '0'; name[++len+1] = 0; }
    sprintf(name+strlen(name),"%d_", sort->run);
 
    sprintf(tmp,"%d", subrun);  digits = strlen(tmp);
@@ -2719,6 +3061,11 @@ int free_sortfile(Sortfile *sort)
    if( sort->data_name  != NULL ){ free(sort->data_name);  }
    if( sort->conf_dir   != NULL ){ free(sort->conf_dir);   }
    if( sort->conf_name  != NULL ){ free(sort->conf_name);  }
+   while( sort->narg > 0 && sort->arg != NULL ){
+      if( sort->arg[sort->narg-1] != NULL ){ free(sort->arg[sort->narg-1]); }
+      --sort->narg;
+   }
+   free(sort->arg);
    memset((char *)sort, 0, sizeof(Sortfile));
    return(0);
 }
@@ -2798,6 +3145,38 @@ int end_current_sortfile(int fd)
 /////////////////          Directory reading          /////////////////////
 ///////////////////////////////////////////////////////////////////////////
 #include <dirent.h>
+
+int most_recent_calib_file(char *data_dir, int data_run, char *result)
+{
+   int run, subrun, closest_run=-1, last_subrun=-1;
+   struct dirent *d_ent;
+   DIR *d;
+   char extn[16];
+
+   result[0]=0;
+   if( (d=opendir(data_dir)) == NULL ){
+     return(-1);
+   }
+   while( (d_ent = readdir(d)) != NULL ){
+     if( strncmp(d_ent->d_name, ".", 1) == 0 ){ continue; } // Ignore
+     if( sscanf(d_ent->d_name, "run%d_%d.%15s", &run, &subrun, extn)
+     != 3 ){
+       if( sscanf(d_ent->d_name, "run%d.%15s", &run, extn) != 2 ){
+         continue; }
+         subrun=-1;
+       }
+       if( strcmp(extn, "json") != 0 ){ continue; }
+       if( run >= data_run ){ continue; } // after current file
+       if( run < closest_run ){ continue; } // already seen more recent
+       if( run > closest_run ){ last_subrun=-1; }
+       closest_run = run;
+       if( subrun >= last_subrun ){
+         sprintf(result, "%s", d_ent->d_name );
+         last_subrun = subrun;
+       }
+     }
+     return( closest_run == -1 );
+}
 
 int send_datafile_list(char *path, int fd, int type)
 {
@@ -2892,6 +3271,39 @@ int send_histofile_list(char *path, int fd)
       nlen = strlen(d_ent->d_name);
       if( strncmp(d_ent->d_name+nlen-4, ".tar", 4)     != 0 ){
          continue; // Not Midas HistoFilename Extension
+      }
+      if( first_entry == 1 ){
+         first_entry = 0;
+      } else {
+         put_line(fd, " , \n ", 5 );
+      }
+      put_line(fd, d_ent->d_name, strlen(d_ent->d_name) );
+   }
+   put_line(fd, " ]\n", 3 );
+   return(0);
+}
+
+int send_configfile_list(char *path, int fd)
+{
+   int nlen, run, subrun, first_entry=1;
+   char tmp[128];
+   struct dirent *d_ent;
+   DIR *d;
+   if( (d=opendir(path)) == NULL ){
+      sprintf(tmp,"can't open directory, %s\n",path);
+      send_http_error_response(fd, STATUS_CODE_404,(char*)tmp);
+      fprintf(stderr,"can't open directory %s\n", path);
+      return(-1);
+   }
+
+   send_header(fd, APP_JSON);
+   put_line(fd, " [ \n", 4 );
+   while( (d_ent = readdir(d)) != NULL ){
+      //fprintf(stdout,"File[%s] ...\n", d_ent->d_name);
+      if( strncmp(d_ent->d_name, ".", 1) == 0 ){ continue; } // Ignore
+      nlen = strlen(d_ent->d_name);
+      if( strncmp(d_ent->d_name+nlen-5, ".json", 5) != 0 ){
+         continue; // Not Configfile Extension
       }
       if( first_entry == 1 ){
          first_entry = 0;
